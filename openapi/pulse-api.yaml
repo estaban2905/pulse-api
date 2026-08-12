@@ -1,0 +1,989 @@
+openapi: 3.0.0
+paths:
+  /health:
+    get:
+      description: "Responde sin tocar la base de datos: solo confirma que el proceso está vivo."
+      operationId: getHealth
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthDto"
+      summary: Comprobar que el API responde
+      tags:
+        - Health
+  /catalog:
+    get:
+      description: "Artistas, álbumes y pistas publicadas, con URLs ya absolutas. Solo aparece lo publicado: una pista incompleta queda fuera."
+      operationId: getCatalog
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogDto"
+      summary: Catálogo público completo
+      tags:
+        - Catálogo
+  /tracks/{id}/stream:
+    get:
+      description: Devuelve el MP3 entero, o el trozo pedido si llega una cabecera `Range`. El reproductor necesita rangos para poder saltar por la canción sin descargarla completa.
+      operationId: streamTrack
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
+          schema:
+            example: get-lucky
+            type: string
+        - name: Range
+          in: header
+          description: Por ejemplo `bytes=0-65535`.
+          required: false
+          schema:
+            type: string
+        - name: v
+          required: false
+          in: query
+          description: Marca de versión que emite el catálogo. Solo rompe la caché del cliente cuando se reemplaza el audio; el servidor la ignora.
+          schema: {}
+      responses:
+        "200":
+          description: MP3 completo.
+        "206":
+          description: Trozo del MP3 pedido por `Range`.
+        "404":
+          description: No existe ninguna pista con ese identificador.
+        "416":
+          description: El `Range` pedido cae fuera del archivo.
+      summary: Reproducir una pista
+      tags:
+        - Reproducción
+  /media/covers/{file}:
+    get:
+      description: Los archivos se nombran por el hash de su contenido, así que son inmutables y pueden cachearse un día entero.
+      operationId: getCover
+      parameters:
+        - name: file
+          required: true
+          in: path
+          description: Nombre del archivo devuelto al subir la portada.
+          schema:
+            example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.jpg
+            type: string
+      responses:
+        "200":
+          description: La imagen (JPEG, PNG o WebP).
+        "404":
+          description: No hay ninguna portada con ese nombre.
+      summary: Servir una portada
+      tags:
+        - Media
+  /admin/tracks:
+    get:
+      description: Incluye las pistas en espera, que no aparecen en `/catalog`, y los álbumes a los que se pueden mover.
+      operationId: listAdminTracks
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCatalogDto"
+        "401": &a1
+          description: Falta la cabecera del token, o no es válido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "503": &a2
+          description: El API no tiene `PULSE_ADMIN_TOKEN` configurado, así que el modo administrador está cerrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: &a3
+        - AdminToken: []
+      summary: Listar el catálogo completo para mantenimiento
+      tags: &a4
+        - Admin
+    post:
+      description: "Única puerta de entrada al catálogo. Es idempotente por slug: reenviar una pista ya publicada la actualiza en vez de duplicarla, así que una subida cortada se puede reintentar tal cual. Lo que llega incompleto entra pero queda en espera, y se publica solo cuando no falta nada (ver `pending`)."
+      operationId: publishTrack
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PublishTrackFormDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishTrackResultDto"
+        "400":
+          description: Metadatos inválidos, o el audio no es un MP3 válido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "401": *a1
+        "409":
+          description: Ese mismo audio, byte a byte, ya está publicado con otro slug.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "413":
+          description: El audio pasa de 60 MB o la portada de 5 MB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "503": *a2
+      security: *a3
+      summary: Publicar una pista con su audio
+      tags: *a4
+  /admin/tracks/{identifier}:
+    patch:
+      operationId: updateAdminTrack
+      parameters:
+        - name: identifier
+          required: true
+          in: path
+          description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
+          schema:
+            example: get-lucky
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTrackDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTrackDto"
+        "400":
+          description: Metadatos inválidos, o el álbum destino no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "401": *a1
+        "404":
+          description: No existe ninguna pista con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "503": *a2
+      security: *a3
+      summary: Editar los metadatos de una pista
+      tags: *a4
+  /admin/albums/{id}:
+    patch:
+      description: El año es el único dato que retiene pistas fuera del catálogo. Al corregirlo se publican las que solo esperaban eso; una pista retirada a mano no vuelve.
+      operationId: updateAdminAlbum
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: UUID del álbum.
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAlbumDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAlbumResultDto"
+        "400":
+          description: Datos inválidos o cuerpo sin nada que cambiar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "401": *a1
+        "404":
+          description: No existe ningún álbum con ese UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "503": *a2
+      security: *a3
+      summary: Editar un álbum y rescatar sus pistas en espera
+      tags: *a4
+  /admin/tracks/{identifier}/audio:
+    post:
+      description: El archivo se guarda por el hash de su contenido, así que el `streamUrl` que devuelve trae una versión nueva y los clientes no reutilizan el MP3 anterior.
+      operationId: replaceAdminTrackAudio
+      parameters:
+        - name: identifier
+          required: true
+          in: path
+          description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
+          schema:
+            example: get-lucky
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ReplaceAudioFormDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTrackDto"
+        "400":
+          description: El archivo no es un MP3 válido, o falta la duración.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "401": *a1
+        "404":
+          description: No existe ninguna pista con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "413":
+          description: El audio pasa de 60 MB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "503": *a2
+      security: *a3
+      summary: Reemplazar el audio de una pista ya publicada
+      tags: *a4
+  /admin/covers:
+    post:
+      description: Devuelve la ruta ya servible. Se guarda por el hash del contenido, así que subir dos veces la misma imagen no ocupa el doble.
+      operationId: uploadAdminCover
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/UploadCoverFormDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoverUploadResultDto"
+        "400":
+          description: El archivo no es un JPG, PNG o WebP válido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "401": *a1
+        "413":
+          description: La imagen pasa de 5 MB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "503": *a2
+      security: *a3
+      summary: Subir una portada
+      tags: *a4
+info:
+  title: Pulse Music API
+  description: |-
+    Catálogo y reproducción de la biblioteca de Pulse.
+
+    Lo público —`/health`, `/catalog`, `/tracks/{id}/stream`, `/media/covers/{file}`— no pide
+    credenciales. Lo que hay bajo `/admin` mantiene el catálogo y va firmado con la cabecera
+    `X-Pulse-Admin-Token`; si el servidor no tiene `PULSE_ADMIN_TOKEN` configurado, esa mitad
+    responde 503 y queda cerrada.
+
+    Toda ruta cuelga del prefijo `/v1`, ya incluido en la URL del servidor.
+  version: 0.1.0
+  contact: {}
+tags:
+  - name: Health
+    description: Señal de vida del proceso
+  - name: Catálogo
+    description: Lo que consumen la web y la app
+  - name: Reproducción
+    description: Entrega del audio, con soporte de rangos
+  - name: Media
+    description: Portadas
+  - name: Admin
+    description: Mantenimiento del catálogo
+servers:
+  - url: http://localhost:4000/v1
+    description: Servidor
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Pulse-Admin-Token
+      description: Secreto compartido con quien mantiene el catálogo. Igual a `PULSE_ADMIN_TOKEN` en el servidor.
+  schemas:
+    HealthDto:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: pulse-api
+        version:
+          type: string
+          example: 0.1.0
+        at:
+          type: string
+          format: date-time
+      required:
+        - status
+        - service
+        - version
+        - at
+    CatalogArtistDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: daft-punk
+        name:
+          type: string
+          example: Daft Punk
+        bio:
+          type: string
+          nullable: true
+        photoUrl:
+          type: string
+          description: URL absoluta; cae en el placeholder si el artista no tiene foto.
+        genres:
+          example:
+            - Electronic
+            - House
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - slug
+        - name
+        - bio
+        - photoUrl
+        - genres
+    ReleaseType:
+      type: string
+      enum:
+        - ALBUM
+        - EP
+        - SINGLE
+    CatalogAlbumDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: random-access-memories
+        title:
+          type: string
+          example: Random Access Memories
+        artistId:
+          type: string
+          format: uuid
+        year:
+          type: number
+          example: 2013
+        type:
+          allOf:
+            - $ref: "#/components/schemas/ReleaseType"
+        genre:
+          type: string
+          example: Electronic
+        coverUrl:
+          type: string
+          description: URL absoluta de la portada.
+        accent:
+          type: string
+          example: "#4B5563"
+          description: Color de acento para la interfaz.
+      required:
+        - id
+        - slug
+        - title
+        - artistId
+        - year
+        - type
+        - genre
+        - coverUrl
+        - accent
+    AudioCodec:
+      type: string
+      enum:
+        - MP3
+        - AAC
+        - FLAC
+    CatalogTrackDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: get-lucky
+        title:
+          type: string
+          example: Get Lucky
+        artistId:
+          type: string
+          format: uuid
+        albumId:
+          type: string
+          format: uuid
+        duration:
+          type: number
+          example: 369
+          description: Duración en segundos.
+        genre:
+          type: string
+          example: Electronic
+        explicit:
+          type: boolean
+        codec:
+          allOf:
+            - $ref: "#/components/schemas/AudioCodec"
+        coverUrl:
+          type: string
+          description: Portada propia de la pista o, si no tiene, la de su álbum.
+        streamUrl:
+          type: string
+          description: URL de reproducción. Lleva `?v=<updatedAt>` para que el cliente no reutilice el MP3 anterior cuando se reemplaza el audio.
+          example: http://localhost:4000/v1/tracks/9f86d0.../stream?v=1754923200000
+      required:
+        - id
+        - slug
+        - title
+        - artistId
+        - albumId
+        - duration
+        - genre
+        - explicit
+        - codec
+        - coverUrl
+        - streamUrl
+    CatalogDto:
+      type: object
+      properties:
+        artists:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogArtistDto"
+        albums:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogAlbumDto"
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogTrackDto"
+      required:
+        - artists
+        - albums
+        - tracks
+    ApiErrorDto:
+      type: object
+      properties:
+        statusCode:
+          type: number
+          example: 400
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          example:
+            - title must be longer than or equal to 1 characters
+        error:
+          type: string
+          example: Bad Request
+      required:
+        - statusCode
+        - message
+        - error
+    AdminTrackDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: get-lucky
+        title:
+          type: string
+          example: Get Lucky
+        artistId:
+          type: string
+          format: uuid
+        artistName:
+          type: string
+          example: Daft Punk
+        albumId:
+          type: string
+          format: uuid
+        albumTitle:
+          type: string
+          example: Random Access Memories
+        duration:
+          type: number
+          example: 369
+          description: Duración en segundos.
+        genre:
+          type: string
+          example: Electronic
+        explicit:
+          type: boolean
+        codec:
+          allOf:
+            - $ref: "#/components/schemas/AudioCodec"
+        coverUrl:
+          type: string
+          description: "Portada efectiva: la propia si existe, si no la del álbum."
+        ownCoverUrl:
+          type: string
+          nullable: true
+          description: Portada propia de la pista. `null` significa que hereda la del álbum.
+        albumCoverUrl:
+          type: string
+        streamUrl:
+          type: string
+        fileSizeBytes:
+          type: number
+          example: 8412160
+        isPublished:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - slug
+        - title
+        - artistId
+        - artistName
+        - albumId
+        - albumTitle
+        - duration
+        - genre
+        - explicit
+        - codec
+        - coverUrl
+        - ownCoverUrl
+        - albumCoverUrl
+        - streamUrl
+        - fileSizeBytes
+        - isPublished
+        - updatedAt
+    AdminAlbumDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: random-access-memories
+        title:
+          type: string
+          example: Random Access Memories
+        artistId:
+          type: string
+          format: uuid
+        artistName:
+          type: string
+          example: Daft Punk
+        year:
+          type: number
+          example: 2013
+          description: "`0` marca un álbum sin año, que retiene sus pistas en espera."
+        coverUrl:
+          type: string
+      required:
+        - id
+        - slug
+        - title
+        - artistId
+        - artistName
+        - year
+        - coverUrl
+    AdminArtistDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: daft-punk
+        name:
+          type: string
+          example: Daft Punk
+        photoUrl:
+          type: string
+          nullable: true
+          description: "`null` cuando el artista no tiene retrato. A diferencia del catálogo público, aquí no se rellena con el placeholder: quien vaya a copiar la foto necesita distinguir un retrato real del relleno que llevan todos."
+      required:
+        - id
+        - slug
+        - name
+        - photoUrl
+    AdminCatalogDto:
+      type: object
+      properties:
+        tracks:
+          description: Todas las pistas, publicadas o no.
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminTrackDto"
+        albums:
+          description: Álbumes válidos como destino de una pista.
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAlbumDto"
+        artists:
+          description: Los artistas, con su foto si la tienen.
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminArtistDto"
+      required:
+        - tracks
+        - albums
+        - artists
+    UpdateTrackDto:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 120
+          example: Jigsaw Falling Into Place
+        genre:
+          type: string
+          maxLength: 80
+          example: Alternative rock
+        explicit:
+          type: boolean
+          example: false
+        albumId:
+          type: string
+          format: uuid
+          description: Mover la pista a otro álbum. El artista pasa a ser el del álbum destino.
+        isPublished:
+          type: boolean
+          description: Publica o retira la pista del catálogo público.
+        coverUrl:
+          type: string
+          nullable: true
+          maxLength: 2048
+          example: /media/covers/9f86d0….jpg
+          description: URL HTTP(S) o ruta /media/covers/. `null` borra la portada propia y hereda la del álbum.
+    UpdateAlbumDto:
+      type: object
+      properties:
+        year:
+          type: number
+          minimum: 1900
+          maximum: 2100
+          example: 2013
+          description: Corregirlo publica las pistas del álbum que solo esperaban este dato.
+        title:
+          type: string
+          maxLength: 200
+          example: Random Access Memories
+        coverUrl:
+          type: string
+          maxLength: 2048
+          example: /media/covers/9f86d0….jpg
+          description: "Portada del disco. Útil para los recopilatorios que no tienen carátula propia: se les puede poner la foto del artista."
+    UpdateAlbumResultDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: random-access-memories
+        title:
+          type: string
+          example: Random Access Memories
+        year:
+          type: number
+          example: 2013
+        coverUrl:
+          type: string
+        published:
+          type: number
+          example: 2
+          description: Pistas que estaban en espera por este álbum y han pasado a publicadas.
+      required:
+        - id
+        - slug
+        - title
+        - year
+        - coverUrl
+        - published
+    ReplaceAudioFormDto:
+      type: object
+      properties:
+        audio:
+          type: string
+          format: binary
+          description: MP3, máximo 60 MB.
+        duration:
+          type: number
+          example: 369
+          description: Duración del nuevo audio, en segundos.
+      required:
+        - audio
+        - duration
+    UploadCoverFormDto:
+      type: object
+      properties:
+        cover:
+          type: string
+          format: binary
+          description: JPG, PNG o WebP, máximo 5 MB.
+      required:
+        - cover
+    CoverUploadResultDto:
+      type: object
+      properties:
+        coverUrl:
+          type: string
+          example: /media/covers/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.jpg
+          description: Ruta servida por este API. Sirve tal cual como `coverUrl` al editar una pista.
+      required:
+        - coverUrl
+    PublishArtistDto:
+      type: object
+      properties:
+        slug:
+          type: string
+          maxLength: 160
+          example: daft-punk
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+        name:
+          type: string
+          maxLength: 200
+          example: Daft Punk
+        genres:
+          default: []
+          maxItems: 8
+          example:
+            - Electronic
+            - House
+          description: Solo se usan al crear el artista; no pisan géneros ya curados.
+          type: array
+          items:
+            type: string
+      required:
+        - slug
+        - name
+    PublishAlbumDto:
+      type: object
+      properties:
+        slug:
+          type: string
+          maxLength: 160
+          example: random-access-memories
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+        title:
+          type: string
+          maxLength: 200
+          example: Random Access Memories
+        year:
+          type: number
+          nullable: true
+          default: null
+          example: 2013
+          description: Sin año la pista entra en espera en vez de publicarse.
+      required:
+        - slug
+        - title
+    PublishTrackDto:
+      type: object
+      properties:
+        slug:
+          type: string
+          maxLength: 160
+          example: get-lucky
+          pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+        title:
+          type: string
+          maxLength: 200
+          example: Get Lucky
+        duration:
+          type: number
+          minimum: 1
+          maximum: 86400
+          example: 369
+        artist:
+          $ref: "#/components/schemas/PublishArtistDto"
+        album:
+          nullable: true
+          default: null
+          description: Sin álbum se crea un SINGLE con el nombre de la pista y queda en espera.
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/PublishAlbumDto"
+        genre:
+          type: string
+          nullable: true
+          default: null
+          maxLength: 80
+          example: Electronic
+          description: Si falta se hereda del artista, y en último término «Sin clasificar».
+      required:
+        - slug
+        - title
+        - duration
+        - artist
+    PublishTrackFormDto:
+      type: object
+      properties:
+        audio:
+          type: string
+          format: binary
+          description: MP3, máximo 60 MB.
+        data:
+          type: string
+          description: PublishTrackDto serializado como JSON.
+          example: '{"slug":"get-lucky","title":"Get Lucky","duration":369,"artist":{"slug":"daft-punk","name":"Daft Punk","genres":["Electronic"]},"album":{"slug":"random-access-memories","title":"Random Access Memories","year":2013},"genre":"Electronic"}'
+        cover:
+          type: string
+          format: binary
+          description: JPG, PNG o WebP, máximo 5 MB.
+      required:
+        - audio
+        - data
+    PublishTrackResultDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: get-lucky
+        title:
+          type: string
+          example: Get Lucky
+        artistId:
+          type: string
+          format: uuid
+        artistName:
+          type: string
+          example: Daft Punk
+        albumId:
+          type: string
+          format: uuid
+        albumTitle:
+          type: string
+          example: Random Access Memories
+        duration:
+          type: number
+          example: 369
+          description: Duración en segundos.
+        genre:
+          type: string
+          example: Electronic
+        explicit:
+          type: boolean
+        codec:
+          allOf:
+            - $ref: "#/components/schemas/AudioCodec"
+        coverUrl:
+          type: string
+          description: "Portada efectiva: la propia si existe, si no la del álbum."
+        ownCoverUrl:
+          type: string
+          nullable: true
+          description: Portada propia de la pista. `null` significa que hereda la del álbum.
+        albumCoverUrl:
+          type: string
+        streamUrl:
+          type: string
+        fileSizeBytes:
+          type: number
+          example: 8412160
+        isPublished:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+        pending:
+          example:
+            - año
+          description: Datos que faltan para publicar. Si no está vacío la pista queda en espera, fuera del catálogo público.
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - slug
+        - title
+        - artistId
+        - artistName
+        - albumId
+        - albumTitle
+        - duration
+        - genre
+        - explicit
+        - codec
+        - coverUrl
+        - ownCoverUrl
+        - albumCoverUrl
+        - streamUrl
+        - fileSizeBytes
+        - isPublished
+        - updatedAt
+        - pending

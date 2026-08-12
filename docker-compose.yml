@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+      POSTGRES_DB: pulse
+    ports: ["5432:5432"]
+    volumes: ["pulse_postgres:/var/lib/postgresql/data"]
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: pulse
+      MINIO_ROOT_PASSWORD: change-me-now
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["pulse_minio:/data"]
+volumes:
+  pulse_postgres:
+  pulse_minio:

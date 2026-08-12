@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+generated/
+coverage/
+storage/audio/*.mp3
+storage/covers/*.jpg
+storage/covers/*.jpeg
+storage/covers/*.png
+storage/covers/*.webp
+!storage/covers/comiendo-fuego.jpg
+!storage/covers/random-access-memories.jpg
+!storage/covers/placeholder.png
