@@ -1,0 +1,67 @@
+# Blueprint de Render para pulse-api.
+#
+# Render lo lee del repo, así que la infraestructura queda versionada junto al
+# código: no hay estado en el panel que no esté aquí.
+#
+# La base y el servicio comparten región a propósito. La `connectionString` que
+# inyecta `fromDatabase` es la interna, y esa solo resuelve dentro de la misma
+# región.
+
+databases:
+  - name: pulse-db
+    databaseName: pulse
+    user: pulse
+    plan: basic-256mb
+    postgresMajorVersion: "17"
+    region: virginia
+
+services:
+  - type: web
+    name: pulse-api
+    runtime: node
+    plan: starter
+    region: virginia
+    branch: main
+    rootDir: .
+
+    # `generated/` y `dist/` no están en git, así que ambos pasos son
+    # obligatorios: sin `prisma generate` no compila el import de PrismaClient.
+    buildCommand: npm ci && npx prisma generate && npm run build
+
+    # Las migraciones van aquí y no en el build: si el build falla, la base no
+    # se toca. Render aborta el despliegue si este comando devuelve error.
+    preDeployCommand: npx prisma migrate deploy
+
+    startCommand: npm start
+    healthCheckPath: /v1/health
+
+    # El audio y las portadas se sirven desde el disco local
+    # (`tracks.controller.ts`, `media.controller.ts`), y el sistema de archivos
+    # de Render es efímero. Sin este disco, cada despliegue borra el catálogo.
+    #
+    # El punto de montaje tapa el directorio `storage/` del repo, incluidas las
+    # portadas versionadas: hay que subirlas al disco como el resto.
+    disk:
+      name: pulse-storage
+      mountPath: /opt/render/project/src/storage
+      sizeGB: 10
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pulse-db
+          property: connectionString
+
+      - key: NODE_VERSION
+        value: "24"
+
+      # Fija el servidor que anuncia OpenAPI y la base de los `streamUrl` que
+      # devuelve el admin. Ajústalo si el servicio queda con otro nombre.
+      - key: PUBLIC_API_URL
+        value: https://pulse-api.onrender.com/v1
+
+      - key: PULSE_ADMIN_TOKEN
+        generateValue: true
+
+      - key: JWT_SECRET
+        generateValue: true
