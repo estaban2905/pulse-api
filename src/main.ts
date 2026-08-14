@@ -13,7 +13,23 @@ import { AppModule } from './app.module';
 import { buildOpenApiDocument } from './openapi';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({ logger: true }));
+  // `trustProxy` no es cosmético: detrás del balanceador de Render, `req.ip` es
+  // siempre la misma IP interna, así que el limitador trataría a todo el mundo
+  // como un único cliente y los 5 intentos por minuto de los endpoints de
+  // contraseña serían 5 para el servicio entero. Con esto Fastify lee
+  // `X-Forwarded-For` y cada quien vuelve a tener su propio cupo.
+  //
+  // El `1` es el número de saltos de confianza, y va en lugar de `true` a
+  // propósito: `true` se queda con el valor de más a la izquierda de la
+  // cabecera, que lo escribe quien llama. Cualquiera podría entonces mandar un
+  // `X-Forwarded-For` inventado y estrenar cupo en cada intento de login, que
+  // es justo lo que el límite existe para impedir. Con `1` se cuenta desde el
+  // socket hacia dentro y solo se cree al balanceador de Render, el único
+  // salto que hay delante. Si algún día se pone un CDN por encima, serán 2.
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter({ logger: true, trustProxy: 1 })
+  );
   await app.register(multipart, {
     limits: { fields: 5, files: 1, fileSize: 60 * 1024 * 1024 }
   });

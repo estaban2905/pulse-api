@@ -46,10 +46,13 @@ services:
     #
     # El punto de montaje tapa el directorio `storage/` del repo, incluidas las
     # portadas versionadas: hay que subirlas al disco como el resto.
+    # 20 GB para 6 GB de catálogo no es derroche: un disco de Render se puede
+    # ampliar pero nunca reducir, así que quedarse corto se paga con una
+    # migración y quedarse largo con dos dólares al mes.
     disk:
       name: pulse-storage
       mountPath: /opt/render/project/src/storage
-      sizeGB: 10
+      sizeGB: 20
 
     envVars:
       - key: DATABASE_URL

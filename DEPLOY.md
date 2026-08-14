@@ -1,7 +1,7 @@
 # Desplegar pulse-api en Render
 
 La API guarda el audio en el disco local y el catálogo en PostgreSQL, así que
-mover el servicio son dos migraciones distintas: la base de datos y los 4,1 GB
+mover el servicio son dos migraciones distintas: la base de datos y los 6,0 GB
 de `storage/`.
 
 Ninguno de los dos pasos usa el endpoint `POST /v1/admin/tracks`. Publicar
@@ -14,7 +14,7 @@ preserva los `storageKey` existentes y evita subir dos veces lo mismo.
 
 En Render: **New → Blueprint**, apuntando a `estaban2905/pulse-api`. Lee
 [`render.yaml`](render.yaml) y crea el servicio web, la base y el disco de
-10 GB.
+20 GB.
 
 `PULSE_ADMIN_TOKEN` y los tres secretos de firma —`JWT_ACCESS_SECRET`,
 `JWT_REFRESH_SECRET` y `MEDIA_SIGNING_SECRET`— se generan solos. Cópialos del
@@ -44,7 +44,7 @@ dominio de nivel superior (`pulse.app` y `api.pulse.app`), cámbialo a `lax`.
 | Recurso | Plan | Mensual |
 |---|---|---|
 | Servicio web | Starter | ~$7 |
-| Disco persistente | 10 GB | ~$2,50 |
+| Disco persistente | 20 GB | ~$5 |
 | PostgreSQL | Basic 256 MB | ~$6 |
 
 El disco obliga a instancia de pago y a una sola réplica: los despliegues tienen
@@ -95,7 +95,7 @@ Render da acceso SSH a los servicios de pago. Copia el comando de conexión
 desde la pestaña **Shell** del servicio (tiene la forma
 `srv-xxxxxxxx@ssh.virginia.render.com`).
 
-Son 781 MP3 y 189 portadas. Con `tar` sobre SSH viajan en un solo flujo, sin
+Son 1155 MP3 y 224 portadas. Con `tar` sobre SSH viajan en un solo flujo, sin
 abrir una conexión por archivo:
 
 ```bash
@@ -105,7 +105,7 @@ tar cf - storage | ssh srv-xxxxxxxx@ssh.virginia.render.com \
 
 Sin `-z`: los MP3 ya están comprimidos y gzip solo gastaría CPU.
 
-Cuenta con horas, no minutos — 4,1 GB salen a la velocidad de subida de tu
+Cuenta con horas, no minutos — 6,0 GB salen a la velocidad de subida de tu
 conexión, no de la bajada. Si se corta, `rsync` reanuda desde donde iba:
 
 ```bash
@@ -117,7 +117,7 @@ Verifica que llegó todo:
 
 ```bash
 ssh srv-xxxxxxxx@ssh.virginia.render.com \
-  "ls /opt/render/project/src/storage/audio | wc -l"   # 781
+  "ls /opt/render/project/src/storage/audio | wc -l"   # 1155
 ```
 
 ---
@@ -149,6 +149,13 @@ La documentación queda en `https://pulse-api.onrender.com/docs`.
 cambiarles la URL base a la de Render antes de que sirvan de algo contra este
 despliegue.
 
-`enableCors({ origin: true })` en [`src/main.ts`](src/main.ts) acepta cualquier
-origen. Va bien para probar; conviene restringirlo a los dominios reales cuando
-el frontend tenga el suyo.
+Y el viaje es de ida y vuelta: el origen desde el que quede servida la web tiene
+que estar en `CORS_ORIGINS`. [`src/main.ts`](src/main.ts) ya no refleja cualquier
+origen —dejó de ser inocuo al aparecer la cookie de sesión—, así que un dominio
+que falte en esa lista no da un error claro, sino un catálogo que no carga.
+
+El correo todavía no tiene proveedor: [`mail.service.ts`](src/auth/mail.service.ts)
+escribe el mensaje en el log del servidor y `deliver` lanza si se configura
+`SMTP_URL`. Hasta que se conecte uno, restablecer la contraseña solo funciona
+para quien pueda leer los logs de Render, y verificar el correo no puede ser
+requisito para usar la cuenta. Déjalo sin configurar.
