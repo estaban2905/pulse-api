@@ -3,17 +3,10 @@
 # Render lo lee del repo, así que la infraestructura queda versionada junto al
 # código: no hay estado en el panel que no esté aquí.
 #
-# La base y el servicio comparten región a propósito. La `connectionString` que
-# inyecta `fromDatabase` es la interna, y esa solo resuelve dentro de la misma
-# región.
-
-databases:
-  - name: pulse-db
-    databaseName: pulse
-    user: pulse
-    plan: basic-256mb
-    postgresMajorVersion: "17"
-    region: virginia
+# Aquí solo se declara el servicio web. Ni base de datos ni disco: la primera
+# está en Neon y los archivos en Cloudflare R2, las dos con capa gratuita que
+# cubre de sobra este catálogo. Render se queda con lo único que cobra por
+# hacer bien, que es tener un proceso escuchando.
 
 services:
   - type: web
@@ -49,10 +42,12 @@ services:
     # escalar ni desplegarse sin un corte.
 
     envVars:
+      # La cadena de conexión de Neon, con `sslmode=require`. Tiene que ser la
+      # directa y no la del pooler: `prisma migrate deploy` toma bloqueos de
+      # sesión, y el pooler de Neon —que agrupa por transacción— los pierde,
+      # así que el pre-deploy fallaría justo al aplicar las migraciones.
       - key: DATABASE_URL
-        fromDatabase:
-          name: pulse-db
-          property: connectionString
+        sync: false
 
       - key: NODE_VERSION
         value: "24"

@@ -11,9 +11,14 @@ cual preserva los `storageKey` existentes y evita subir dos veces lo mismo.
 
 ## 1. Crear la infraestructura
 
+Antes del blueprint hace falta la base de datos, porque Render ya no la crea:
+en [Neon](https://neon.com), proyecto nuevo en **US East** y copiar la cadena de
+conexión. La **directa**, no la del pooler — el pooler agrupa por transacción y
+`prisma migrate deploy` perdería los bloqueos de sesión que necesita.
+
 En Render: **New → Blueprint**, apuntando a `estaban2905/pulse-api`. Lee
-[`render.yaml`](render.yaml) y crea el servicio web y la base. Sin disco: los
-archivos están en R2.
+[`render.yaml`](render.yaml) y crea solo el servicio web. Ni base ni disco: la
+primera está en Neon y los archivos en R2.
 
 `PULSE_ADMIN_TOKEN` y los tres secretos de firma —`JWT_ACCESS_SECRET`,
 `JWT_REFRESH_SECRET` y `MEDIA_SIGNING_SECRET`— se generan solos. Cópialos del
@@ -24,6 +29,7 @@ desde aquí:
 
 | Variable | Qué es | Ejemplo |
 |---|---|---|
+| `DATABASE_URL` | Cadena directa de Neon | `postgresql://…@ep-….neon.tech/neondb?sslmode=require` |
 | `PUBLIC_WEB_URL` | Base de los enlaces de restablecer contraseña y verificar correo | `https://pulse.app` |
 | `CORS_ORIGINS` | Orígenes autorizados a llamar con credenciales, separados por comas | `https://pulse.app,https://www.pulse.app` |
 | `S3_ENDPOINT` | Endpoint de R2, sin el nombre del cubo | `https://….r2.cloudflarestorage.com` |
@@ -48,14 +54,18 @@ dominio de nivel superior (`pulse.app` y `api.pulse.app`), cámbialo a `lax`.
 
 | Recurso | Plan | Mensual |
 |---|---|---|
-| Servicio web | Starter | ~$7 |
-| PostgreSQL | Basic 256 MB | ~$6 |
-| Cloudflare R2 | 6 GB de 10 GB gratuitos | $0 |
+| Servicio web (Render) | Starter | ~$7 |
+| PostgreSQL (Neon) | 11 MB de 0,5 GB gratuitos | $0 |
+| Archivos (Cloudflare R2) | 6 GB de 10 GB gratuitos | $0 |
 
-Unos $13 al mes, y **planos**: lo único que sale de Render es JSON, así que la
-factura no crece con los oyentes. Cuando el audio salía del disco, cada
-reproducción eran 5,3 MB de ancho de banda a $0,15/GB, y con cien oyentes eso
-sumaba unos $35 al mes solo de tráfico. R2 no cobra por servir.
+**$7 al mes, y plano**: lo único que sale de Render es JSON, así que la factura
+no crece con los oyentes. Cuando el audio salía del disco, cada reproducción
+eran 5,3 MB de ancho de banda a $0,15/GB, y con cien oyentes eso sumaba unos $35
+al mes solo de tráfico. R2 no cobra por servir.
+
+La base de Render costaba $10,50 para guardar 11 MB. Neon da 0,5 GB gratis —45
+veces lo que ocupa el catálogo— a cambio de suspenderse cuando nadie la usa y
+tardar medio segundo en despertar.
 
 El plan **Hobby** basta: Pro cuesta $25 al mes más y sus 20 GB extra de ancho de
 banda valen $3, así que nunca compensa. Su función estrella —el escalado
@@ -67,7 +77,7 @@ impida.
 ## 2. Migrar PostgreSQL
 
 El volcado incluye la tabla `_prisma_migrations`, así que el `prisma migrate
-deploy` del pre-deploy encuentra las dos migraciones ya aplicadas y no hace
+deploy` del pre-deploy encuentra las ocho migraciones ya aplicadas y no hace
 nada. No hay que ejecutarlas a mano.
 
 Con el Postgres local levantado (`docker compose up -d postgres`):
@@ -78,13 +88,17 @@ docker compose exec -T postgres \
   > pulse.sql
 ```
 
-Copia la **External Database URL** desde el panel de la base en Render y
-restaura. El contenedor ya trae `psql`, así que no necesitas cliente local:
+Y restaura contra Neon. El contenedor ya trae `psql`, así que no necesitas
+cliente local:
 
 ```bash
 cat pulse.sql | docker compose exec -T postgres \
-  psql "postgresql://...@...virginia-postgres.render.com/pulse?sslmode=require"
+  psql "postgresql://…@ep-….neon.tech/neondb?sslmode=require"
 ```
+
+Neon sirve Postgres 18 y el volcado sale de un 17: restaurar hacia una versión
+mayor es la dirección compatible, y el aviso de versión que suelta `psql` no
+significa nada aquí.
 
 `--clean --if-exists` hace la restauración repetible: puedes relanzarla sin
 dejar la base a medias.
