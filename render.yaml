@@ -60,8 +60,13 @@ services:
 
       # Fija el servidor que anuncia OpenAPI y la base de los `streamUrl` que
       # devuelve el admin. Ajústalo si el servicio queda con otro nombre.
+      # Lleva el sufijo que Render añadió al estar `pulse-api` cogido. El
+      # catálogo público no depende de esto —construye las URLs con la cabecera
+      # `Host`, así que acierta sola—, pero el admin y la documentación sí lo
+      # leen: con el dominio equivocado, el reproductor del panel apunta a un
+      # servicio que no existe.
       - key: PUBLIC_API_URL
-        value: https://pulse-api.onrender.com/v1
+        value: https://pulse-api-mq9p.onrender.com/v1
 
       # Base de los enlaces de restablecer contraseña y verificar correo. Apunta
       # a la web, no al API, y por eso no se puede deducir de `PUBLIC_API_URL`.
