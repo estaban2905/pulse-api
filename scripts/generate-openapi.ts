@@ -23,10 +23,14 @@ const OUTPUT = join(process.cwd(), 'openapi', 'pulse-api.yaml');
 
 async function main(): Promise<void> {
   // Generar el documento solo instancia los proveedores; nunca se conecta a la
-  // base. La cadena de conexión igualmente tiene que existir porque
-  // PrismaService la exige al construirse, así que se pone una de mentira para
-  // que el script funcione donde no hay `.env` —una CI, por ejemplo—.
+  // base ni firma nada. La cadena de conexión y los secretos igualmente tienen
+  // que existir porque `PrismaService` y `SecurityConfig` los exigen al
+  // construirse, así que se ponen de mentira para que el script funcione donde
+  // no hay `.env` —una CI, por ejemplo—.
   process.env.DATABASE_URL ??= 'postgresql://openapi:openapi@localhost:5432/openapi';
+  process.env.JWT_ACCESS_SECRET ??= 'openapi-placeholder-access-secret-000000';
+  process.env.JWT_REFRESH_SECRET ??= 'openapi-placeholder-refresh-secret-00000';
+  process.env.MEDIA_SIGNING_SECRET ??= 'openapi-placeholder-media-secret-0000000';
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
     logger: false

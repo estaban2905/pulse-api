@@ -27,6 +27,12 @@ export class CatalogArtistDto {
 
   @ApiProperty({ type: [String], example: ['Electronic', 'House'] })
   genres!: string[];
+
+  @ApiProperty({ example: 0, description: 'Cuentas que siguen al artista. Real, no estimado.' })
+  followers!: number;
+
+  @ApiProperty({ example: 0, description: 'Reproducciones registradas de todas sus pistas.' })
+  plays!: number;
 }
 
 export class CatalogAlbumDto {
@@ -95,6 +101,63 @@ export class CatalogTrackDto {
     example: 'http://localhost:4000/v1/tracks/9f86d0.../stream?v=1754923200000'
   })
   streamUrl!: string;
+
+  @ApiProperty({ example: 0, description: 'Reproducciones registradas de esta pista.' })
+  plays!: number;
+}
+
+export class CatalogGenreDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'rock-alternativo' })
+  slug!: string;
+
+  @ApiProperty({ example: 'Rock alternativo' })
+  name!: string;
+
+  @ApiProperty({ example: '#E14B34', description: 'Color de presentación.' })
+  color!: string;
+}
+
+export class CatalogMoodDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'concentracion' })
+  slug!: string;
+
+  @ApiProperty({ example: 'Concentración' })
+  name!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  description!: string | null;
+
+  @ApiProperty({ example: 'Target', description: 'Nombre del icono de lucide que dibuja el cliente.' })
+  icon!: string;
+
+  @ApiProperty({ example: '#587891' })
+  color!: string;
+
+  @ApiProperty({ type: [String], description: 'UUIDs de las pistas, ya en orden.' })
+  trackIds!: string[];
+}
+
+export class CatalogPlaylistDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'Radiohead esencial' })
+  title!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  description!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'URL absoluta de la portada.' })
+  coverUrl!: string | null;
+
+  @ApiProperty({ type: [String], description: 'UUIDs de las pistas, ya en orden.' })
+  trackIds!: string[];
 }
 
 export class CatalogDto {
@@ -106,4 +169,16 @@ export class CatalogDto {
 
   @ApiProperty({ type: [CatalogTrackDto] })
   tracks!: CatalogTrackDto[];
+
+  @ApiProperty({ type: [CatalogGenreDto], description: 'Solo los géneros presentes en el catálogo.' })
+  genres!: CatalogGenreDto[];
+
+  @ApiProperty({ type: [CatalogMoodDto] })
+  moods!: CatalogMoodDto[];
+
+  @ApiProperty({
+    type: [CatalogPlaylistDto],
+    description: 'Playlists de Pulse, sin dueño. Las del usuario van en `/me/playlists`.'
+  })
+  playlists!: CatalogPlaylistDto[];
 }

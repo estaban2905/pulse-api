@@ -6,7 +6,14 @@ import { join } from 'node:path';
 
 import { AudioCodec } from '../../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { UUID_PATTERN, type PublishTrackDto, type UpdateAlbumDto, type UpdateTrackDto } from './admin.dto';
+import { MediaSigningService } from '../config/media-signing.service';
+import {
+  UUID_PATTERN,
+  type PublishTrackDto,
+  type UpdateAlbumDto,
+  type UpdateArtistDto,
+  type UpdateTrackDto
+} from './admin.dto';
 
 const LEGACY_TRACK_PREFIX = 'tr-';
 
@@ -86,7 +93,10 @@ async function writeStableFile(directory: string, filename: string, buffer: Buff
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mediaSigning: MediaSigningService
+  ) {}
 
   private async findTrack(identifier: string) {
     const isUuid = UUID_PATTERN.test(identifier);
@@ -122,7 +132,12 @@ export class AdminService {
       coverUrl: track.coverUrl ? absoluteUrl(apiUrl, track.coverUrl) : albumCoverUrl,
       ownCoverUrl: track.coverUrl,
       albumCoverUrl,
-      streamUrl: `${apiUrl}/tracks/${track.id}/stream?v=${track.updatedAt.getTime()}`,
+      // Firmada igual que en el catálogo: el mantenedor reproduce el audio con
+      // la misma etiqueta `<audio>`, que tampoco puede mandar cabeceras.
+      streamUrl: `${apiUrl}/tracks/${track.id}/stream?${this.mediaSigning.signedQuery(
+        track.id,
+        track.updatedAt.getTime()
+      )}`,
       fileSizeBytes: Number(track.fileSizeBytes),
       isPublished: track.isPublished,
       updatedAt: track.updatedAt.toISOString()
@@ -141,7 +156,7 @@ export class AdminService {
       // payload, así que un cliente que quisiera usarla —para dar carátula a un
       // recopilatorio, por ejemplo— tenía que ir a pedirla al catálogo público.
       this.prisma.artist.findMany({
-        select: { id: true, slug: true, name: true, photoUrl: true },
+        select: { id: true, slug: true, name: true, photoUrl: true, genres: true, bio: true },
         orderBy: { name: 'asc' }
       })
     ]);
@@ -164,7 +179,12 @@ export class AdminService {
         // Sin foto se devuelve null, no el placeholder: quien la vaya a copiar
         // necesita distinguir «tiene retrato» de «tiene el relleno de todos»,
         // y el catálogo público, que sí rellena, no puede responder a eso.
-        photoUrl: artist.photoUrl ? absoluteUrl(apiUrl, artist.photoUrl) : null
+        photoUrl: artist.photoUrl ? absoluteUrl(apiUrl, artist.photoUrl) : null,
+        // Sin esto, quien publica no tenía de dónde sacar el género y mandaba
+        // la lista vacía: así fue como el 85 % del catálogo acabó en
+        // «Sin clasificar».
+        genres: artist.genres,
+        bio: artist.bio
       }))
     };
   }
@@ -325,6 +345,7 @@ export class AdminService {
         title: input.title,
         duration: input.duration,
         genre,
+        explicit: input.explicit ?? false,
         codec: AudioCodec.MP3,
         storageKey,
         fileSizeBytes: BigInt(audio.buffer.length),
@@ -335,6 +356,9 @@ export class AdminService {
         duration: input.duration,
         albumId: album.id,
         genre,
+        // Igual que `coverUrl`: solo se toca si esta subida trae el dato. Un
+        // publicador que no sabe de marcas no debe borrar la de quien sí sabía.
+        ...(input.explicit === undefined ? {} : { explicit: input.explicit }),
         storageKey,
         fileSizeBytes: BigInt(audio.buffer.length),
         // Una pista que estaba en espera por incompleta se publica en cuanto
@@ -388,6 +412,35 @@ export class AdminService {
       year: updated.year,
       coverUrl: absoluteUrl(apiUrl, updated.coverUrl),
       published
+    };
+  }
+
+  /**
+   * Corrige la ficha de un artista.
+   *
+   * Existe porque sus géneros solo se podían fijar al crearlo: la publicación
+   * no los pisa —y hace bien—, así que un artista que entró sin ellos se
+   * quedaba sin ellos para siempre, y la única salida era un script contra la
+   * base de datos. Importa más de lo que parece: el primer género del artista
+   * es el que hereda cada pista suya que se publique sin género.
+   */
+  async updateArtist(id: string, input: UpdateArtistDto, apiUrl: string) {
+    const artist = await this.prisma.artist.findUnique({ where: { id } });
+    if (!artist) throw new NotFoundException('Artist not found');
+
+    const updated = await this.prisma.artist.update({
+      where: { id },
+      // `undefined` deja el campo como estaba; `null` en bio y photoUrl sí borra.
+      data: { genres: input.genres, bio: input.bio, photoUrl: input.photoUrl }
+    });
+
+    return {
+      id: updated.id,
+      slug: updated.slug,
+      name: updated.name,
+      photoUrl: updated.photoUrl ? absoluteUrl(apiUrl, updated.photoUrl) : null,
+      genres: updated.genres,
+      bio: updated.bio
     };
   }
 

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { MediaSigningService } from '../config/media-signing.service';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LEGACY_TRACK_PREFIX = 'tr-';
@@ -13,12 +14,15 @@ const LEGACY_TRACK_PREFIX = 'tr-';
  */
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mediaSigning: MediaSigningService
+  ) {}
 
   async getCatalog(apiUrl: string) {
     const absolute = (path: string) => (path.startsWith('http') ? path : `${apiUrl}${path}`);
 
-    const [artists, albums, tracks] = await Promise.all([
+    const [artists, albums, tracks, genres, moods, systemPlaylists, followerCounts, playCounts] = await Promise.all([
       this.prisma.artist.findMany({
         where: { tracks: { some: { isPublished: true } } },
         orderBy: { name: 'asc' }
@@ -31,8 +35,34 @@ export class CatalogService {
         where: { isPublished: true },
         include: { album: { select: { coverUrl: true } } },
         orderBy: { title: 'asc' }
-      })
+      }),
+      this.prisma.genre.findMany({ orderBy: { position: 'asc' } }),
+      this.prisma.mood.findMany({
+        orderBy: { position: 'asc' },
+        include: { tracks: { select: { trackId: true, position: true }, orderBy: { position: 'asc' } } }
+      }),
+      this.prisma.playlist.findMany({
+        where: { isSystem: true },
+        orderBy: { position: 'asc' },
+        include: { tracks: { select: { trackId: true, position: true }, orderBy: { position: 'asc' } } }
+      }),
+      // Dos agregaciones para todo el catálogo, no una consulta por entidad:
+      // con casi mil pistas, lo segundo convertiría cada carga en una tormenta
+      // de consultas.
+      this.prisma.artistFollow.groupBy({ by: ['artistId'], _count: { artistId: true } }),
+      this.prisma.listeningHistory.groupBy({ by: ['trackId'], _count: { trackId: true } })
     ]);
+
+    const followersByArtist = new Map(followerCounts.map((row) => [row.artistId, row._count.artistId]));
+    const playsByTrack = new Map(playCounts.map((row) => [row.trackId, row._count.trackId]));
+
+    // Las escuchas de un artista son la suma de las de sus pistas, y se calcula
+    // aquí en vez de con otra consulta porque las pistas ya están cargadas.
+    const playsByArtist = new Map<string, number>();
+    for (const track of tracks) {
+      const plays = playsByTrack.get(track.id) ?? 0;
+      if (plays) playsByArtist.set(track.artistId, (playsByArtist.get(track.artistId) ?? 0) + plays);
+    }
 
     return {
       artists: artists.map((artist) => ({
@@ -41,7 +71,11 @@ export class CatalogService {
         name: artist.name,
         bio: artist.bio,
         photoUrl: absolute(artist.photoUrl ?? '/media/covers/placeholder.png'),
-        genres: artist.genres
+        genres: artist.genres,
+        // Cifras reales, no de escaparate: al principio serán cero, y eso es
+        // más honesto que un número inventado que nunca cambia.
+        followers: followersByArtist.get(artist.id) ?? 0,
+        plays: playsByArtist.get(artist.id) ?? 0
       })),
       albums: albums.map((album) => ({
         id: album.id,
@@ -66,9 +100,36 @@ export class CatalogService {
         explicit: track.explicit,
         codec: track.codec,
         coverUrl: absolute(track.coverUrl ?? track.album.coverUrl),
-        // Version the public URL so clients do not reuse the previous MP3
-        // after an administrator replaces the immutable storage object.
-        streamUrl: `${apiUrl}/tracks/${track.id}/stream?v=${track.updatedAt.getTime()}`
+        // `v` versiona la URL para que nadie reutilice el MP3 anterior cuando
+        // un administrador lo reemplaza; `exp` y `sig` son el permiso, que va
+        // dentro de la URL porque un `<audio src>` no puede mandar cabeceras.
+        streamUrl: `${apiUrl}/tracks/${track.id}/stream?${this.mediaSigning.signedQuery(
+          track.id,
+          track.updatedAt.getTime()
+        )}`,
+        plays: playsByTrack.get(track.id) ?? 0
+      })),
+      genres: genres.map((genre) => ({
+        id: genre.id,
+        slug: genre.slug,
+        name: genre.name,
+        color: genre.color
+      })),
+      moods: moods.map((mood) => ({
+        id: mood.id,
+        slug: mood.slug,
+        name: mood.name,
+        description: mood.description,
+        icon: mood.icon,
+        color: mood.color,
+        trackIds: mood.tracks.map((entry) => entry.trackId)
+      })),
+      playlists: systemPlaylists.map((playlist) => ({
+        id: playlist.id,
+        title: playlist.title,
+        description: playlist.description,
+        coverUrl: playlist.coverUrl ? absolute(playlist.coverUrl) : null,
+        trackIds: playlist.tracks.map((entry) => entry.trackId)
       }))
     };
   }

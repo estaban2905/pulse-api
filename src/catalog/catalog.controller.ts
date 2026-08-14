@@ -1,11 +1,15 @@
 import { Controller, Get, Headers } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
+import { Public } from '../auth/auth.decorators';
 import { CatalogService } from './catalog.service';
 import { CatalogDto } from './catalog.responses';
 
+// Sigue siendo público: la web muestra el catálogo antes de pedir cuenta, y
+// "explorar sin cuenta" es una opción de la propia pantalla de acceso.
 @ApiTags('Catálogo')
 @Controller('catalog')
+@Public()
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 

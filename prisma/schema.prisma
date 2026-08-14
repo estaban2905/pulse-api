@@ -12,6 +12,11 @@ enum Role {
   ADMIN
 }
 
+enum AuthTokenKind {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+}
+
 enum ReleaseType {
   ALBUM
   EP
@@ -24,25 +29,27 @@ enum AudioCodec {
   FLAC
 }
 
-enum DownloadStatus {
-  QUEUED
-  DOWNLOADING
-  READY
-  FAILED
-}
-
 model User {
-  id            String             @id @default(uuid()) @db.Uuid
-  email         String             @unique
-  passwordHash  String?
-  displayName   String
-  avatarUrl     String?
-  role          Role               @default(USER)
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id              String             @id @default(uuid()) @db.Uuid
+  /// La dirección tal y como la escribió el usuario. Es la que se le muestra.
+  email           String             @unique
+  /// Forma canónica, para comparar buzones: Gmail ignora puntos y `+etiqueta`.
+  /// Es la que decide si una cuenta ya existe, y el índice único lo garantiza
+  /// aunque alguna vía futura olvide comprobarlo.
+  emailKey        String             @unique
+  passwordHash    String?
+  displayName     String
+  avatarUrl       String?
+  role            Role               @default(USER)
+  /// Cuándo se comprobó que el buzón existe. Nulo mientras no se verifique.
+  emailVerifiedAt DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  authTokens      AuthToken[]
   playlists     Playlist[]
   favourites    Favourite[]
   followed      ArtistFollow[]
+  savedAlbums   AlbumSave[]
   history       ListeningHistory[]
   preferences   UserPreference?
   refreshTokens RefreshToken[]
@@ -74,6 +81,7 @@ model Album {
   coverUrl  String
   accent    String?
   tracks    Track[]
+  savedBy   AlbumSave[]
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
@@ -98,6 +106,7 @@ model Track {
   isPublished    Boolean            @default(false)
   favourites     Favourite[]
   playlistTracks PlaylistTrack[]
+  moodTracks     MoodTrack[]
   history        ListeningHistory[]
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
@@ -107,20 +116,75 @@ model Track {
   @@index([title])
 }
 
+/**
+ * Playlist de un usuario o del propio Pulse.
+ *
+ * `ownerId` es opcional porque las editoriales no son de nadie: vivían escritas
+ * en el código del cliente y por eso no se podían editar sin desplegar. Una
+ * playlist de sistema es exactamente eso, una sin dueño y con `isSystem`.
+ */
 model Playlist {
   id            String          @id @default(uuid()) @db.Uuid
-  ownerId       String          @db.Uuid
-  owner         User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId       String?         @db.Uuid
+  owner         User?           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  isSystem      Boolean         @default(false)
   title         String
   description   String?
   coverUrl      String?
   collaborative Boolean         @default(false)
   isPublic      Boolean         @default(false)
+  position      Int             @default(0)
   tracks        PlaylistTrack[]
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
   @@index([ownerId, updatedAt])
+  @@index([isSystem, position])
+}
+
+/**
+ * Género musical con su color de presentación.
+ *
+ * El color vivía en el cliente, así que añadir un género obligaba a tocar dos
+ * sitios. Aquí solo están los géneros que de verdad aparecen en el catálogo.
+ */
+model Genre {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  name      String   @unique
+  color     String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([position])
+}
+
+/** Selección temática hecha a mano: "Concentración", "Viajar"… */
+model Mood {
+  id          String      @id @default(uuid()) @db.Uuid
+  slug        String      @unique
+  name        String
+  description String?
+  icon        String
+  color       String
+  position    Int         @default(0)
+  tracks      MoodTrack[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([position])
+}
+
+model MoodTrack {
+  moodId   String @db.Uuid
+  trackId  String @db.Uuid
+  position Int
+  mood     Mood   @relation(fields: [moodId], references: [id], onDelete: Cascade)
+  track    Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([moodId, trackId])
+  @@unique([moodId, position])
 }
 
 model PlaylistTrack {
@@ -144,6 +208,23 @@ model Favourite {
   track     Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@id([userId, trackId])
+}
+
+/**
+ * Álbum guardado en la biblioteca.
+ *
+ * Faltaba: `Favourite` cubre pistas y `ArtistFollow` artistas, pero los discos
+ * guardados solo existían en el navegador y por eso no seguían a nadie de un
+ * dispositivo a otro.
+ */
+model AlbumSave {
+  userId    String   @db.Uuid
+  albumId   String   @db.Uuid
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@id([userId, albumId])
 }
 
 model ArtistFollow {
@@ -171,16 +252,39 @@ model ListeningHistory {
 }
 
 model UserPreference {
-  userId          String  @id @db.Uuid
-  theme           String  @default("dark")
-  language        String  @default("es")
-  streamQuality   String  @default("high")
-  downloadQuality String  @default("high")
-  autoplay        Boolean @default(true)
-  crossfade       Int     @default(0)
-  normalize       Boolean @default(false)
-  privateSession  Boolean @default(false)
-  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String   @id @db.Uuid
+  theme           String   @default("dark")
+  language        String   @default("es")
+  streamQuality   String   @default("high")
+  downloadQuality String   @default("high")
+  autoplay        Boolean  @default(true)
+  crossfade       Int      @default(0)
+  normalize       Boolean  @default(false)
+  privateSession  Boolean  @default(false)
+  /// Géneros que el usuario marca como suyos. Vivían en el navegador, así que
+  /// no le acompañaban de un dispositivo a otro.
+  favouriteGenres String[]
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/**
+ * Enlace de un solo uso enviado por correo.
+ *
+ * Sirve tanto para restablecer la contraseña como para comprobar el buzón. Se
+ * guarda su huella, nunca el valor: quien lea esta tabla no puede reconstruir
+ * un enlace válido, igual que con los refresh tokens.
+ */
+model AuthToken {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @db.Uuid
+  kind      AuthTokenKind
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
 }
 
 model RefreshToken {

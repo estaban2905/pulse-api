@@ -26,7 +26,12 @@ services:
 
     # `generated/` y `dist/` no están en git, así que ambos pasos son
     # obligatorios: sin `prisma generate` no compila el import de PrismaClient.
-    buildCommand: npm ci && npx prisma generate && npm run build
+    #
+    # `--include=dev` no es redundante: `NODE_ENV=production` también está
+    # presente durante el build, y con esa variable `npm ci` omite las
+    # dependencias de desarrollo —entre ellas `@nestjs/cli` y `prisma`, que son
+    # justo las dos que este comando necesita.
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
 
     # Las migraciones van aquí y no en el build: si el build falla, la base no
     # se toca. Render aborta el despliegue si este comando devuelve error.
@@ -55,13 +60,51 @@ services:
       - key: NODE_VERSION
         value: "24"
 
+      # No es decorativa: de ella dependen que la cookie de sesión salga con
+      # `Secure` y que los orígenes de localhost dejen de aceptarse. Sin ella el
+      # servicio arranca creyéndose un entorno de desarrollo.
+      - key: NODE_ENV
+        value: production
+
       # Fija el servidor que anuncia OpenAPI y la base de los `streamUrl` que
       # devuelve el admin. Ajústalo si el servicio queda con otro nombre.
       - key: PUBLIC_API_URL
         value: https://pulse-api.onrender.com/v1
 
+      # Base de los enlaces de restablecer contraseña y verificar correo. Apunta
+      # a la web, no al API, y por eso no se puede deducir de `PUBLIC_API_URL`.
+      # `sync: false` hace que Render lo pida al crear el blueprint: es preferible
+      # a dejar aquí un dominio inventado que enviaría a la gente a ningún sitio.
+      - key: PUBLIC_WEB_URL
+        sync: false
+
+      # Orígenes autorizados a llamar con credenciales, separados por comas.
+      # En producción no hay red de seguridad: si queda vacío, ningún navegador
+      # puede usar el API. Debe coincidir con el origen de la web ya desplegada.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # La web y el API viven en dominios distintos, así que la petición es
+      # cross-site y el navegador descartaría una cookie `lax`. `none` obliga a
+      # HTTPS, que en Render ya se cumple.
+      - key: COOKIE_SAMESITE
+        value: none
+
       - key: PULSE_ADMIN_TOKEN
         generateValue: true
 
-      - key: JWT_SECRET
+      # Tres secretos distintos, no uno. `SecurityConfig` los exige por nombre y
+      # lanza al construir el módulo si falta cualquiera, así que un servicio con
+      # `JWT_SECRET` a secas no llega ni a escuchar en el puerto. Además rechaza
+      # que el de acceso y el de refresco coincidan: con un único secreto, un
+      # access token robado serviría como refresh.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+
+      # Firma las URLs de audio. Cambiarlo invalida al instante todos los
+      # enlaces repartidos, que es exactamente lo que se quiere si se filtra.
+      - key: MEDIA_SIGNING_SECRET
         generateValue: true

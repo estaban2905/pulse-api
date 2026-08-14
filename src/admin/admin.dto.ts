@@ -141,6 +141,59 @@ export class UpdateAlbumDto {
 }
 
 // ---------------------------------------------------------------------------
+// PATCH /admin/artists/{id}
+// ---------------------------------------------------------------------------
+
+@AtLeastOneField(['genres', 'bio', 'photoUrl'])
+export class UpdateArtistDto {
+  @ApiPropertyOptional({
+    type: [String],
+    maxItems: 8,
+    example: ['Reggae', 'Dancehall'],
+    description:
+      'Géneros del artista, del más general al más específico. El primero es el que hereda ' +
+      'una pista suya publicada sin género, así que el orden no es decorativo. Sustituye la ' +
+      'lista entera: mandar `[]` la deja vacía.'
+  })
+  @Optional()
+  @Transform(({ value }) => {
+    if (!Array.isArray(value)) return value;
+    // Se recorta en vez de rechazar, igual que al publicar: una lista larga de
+    // más no debería tumbar la corrección de los primeros, que son los que
+    // importan.
+    return value.slice(0, 8).map((genre) => (typeof genre === 'string' ? genre.trim() : genre));
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @Length(1, 80, { each: true })
+  genres?: string[];
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: 4000,
+    description: 'Reseña del artista. `null` la quita.'
+  })
+  @NullableOptional()
+  @Trim()
+  @IsString()
+  @Length(1, 4000)
+  bio?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: 2048,
+    example: '/media/covers/9f86d0….jpg',
+    description: 'Retrato del artista. `null` lo quita y el catálogo público vuelve al relleno.'
+  })
+  @NullableOptional()
+  @Trim()
+  @IsCoverUrl()
+  photoUrl?: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // POST /admin/tracks — campo `data` del multipart
 // ---------------------------------------------------------------------------
 
@@ -263,6 +316,19 @@ export class PublishTrackDto {
   @IsString()
   @Length(1, 80)
   genre: string | null = null;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Marca de contenido explícito. Se puede fijar al publicar y no solo editar después: ' +
+      'cuando solo existía en el `PATCH`, toda pista entraba como no explícita y había que ' +
+      'corregirla a mano una por una. Omitirlo no es lo mismo que mandar `false`: en una ' +
+      'pista que ya existe, omitirlo deja la marca como estaba, para que quien publica sin ' +
+      'saberlo no borre lo que alguien corrigió a mano.'
+  })
+  @Optional()
+  @IsBoolean()
+  explicit?: boolean;
 }
 
 // ---------------------------------------------------------------------------

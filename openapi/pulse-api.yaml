@@ -48,6 +48,16 @@ paths:
           required: false
           schema:
             type: string
+        - name: sig
+          required: true
+          in: query
+          description: Firma que emite el catálogo junto a la URL.
+          schema: {}
+        - name: exp
+          required: true
+          in: query
+          description: Caducidad de la firma, en segundos desde la época.
+          schema: {}
         - name: v
           required: false
           in: query
@@ -58,6 +68,8 @@ paths:
           description: MP3 completo.
         "206":
           description: Trozo del MP3 pedido por `Range`.
+        "403":
+          description: La firma falta, no cuadra, o ya caducó. Vuelve a pedir `/catalog`.
         "404":
           description: No existe ninguna pista con ese identificador.
         "416":
@@ -85,6 +97,579 @@ paths:
       summary: Servir una portada
       tags:
         - Media
+  /auth/register:
+    post:
+      description: "Deja la sesión abierta: devuelve el access token y planta la cookie de refresco."
+      operationId: register
+      parameters:
+        - name: x-pulse-client
+          required: true
+          in: header
+          schema:
+            type: string
+        - name: X-Pulse-Client
+          in: header
+          description: "`native` para recibir el refresh token en el cuerpo."
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "409":
+          description: Ya hay una cuenta con ese correo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      summary: Crear una cuenta
+      tags: &a1
+        - Sesión
+  /auth/login:
+    post:
+      operationId: login
+      parameters:
+        - name: x-pulse-client
+          required: true
+          in: header
+          schema:
+            type: string
+        - name: X-Pulse-Client
+          in: header
+          description: "`native` para recibir el refresh token en el cuerpo."
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "401":
+          description: Correo o contraseña incorrectos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      summary: Iniciar sesión
+      tags: *a1
+  /auth/refresh:
+    post:
+      description: "Rota el refresh token: el anterior queda anulado en el mismo canje. Si uno ya usado vuelve a aparecer se cierran todas las sesiones de esa cuenta, porque solo se copia lo que se ha robado."
+      operationId: refresh
+      parameters:
+        - name: x-pulse-client
+          required: true
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "401":
+          description: Refresh token ausente, caducado o ya usado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      summary: Renovar el access token
+      tags: *a1
+  /auth/logout:
+    post:
+      description: "Anula el refresh token y borra la cookie. Es idempotente: sin sesión abierta también responde 204."
+      operationId: logout
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshDto"
+      responses:
+        "204":
+          description: ""
+      summary: Cerrar la sesión actual
+      tags: *a1
+  /auth/forgot-password:
+    post:
+      description: Responde 204 exista o no la cuenta. Decir cuál de las dos convertiría este formulario en una forma de averiguar qué correos están registrados.
+      operationId: forgotPassword
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordDto"
+      responses:
+        "204":
+          description: Si esa cuenta existe, el enlace va de camino.
+      summary: Pedir un enlace para restablecer la contraseña
+      tags: *a1
+  /auth/reset-password:
+    post:
+      description: "Cierra todas las sesiones abiertas de esa cuenta: si la contraseña la tenía alguien más, su sesión también cae."
+      operationId: resetPassword
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordDto"
+      responses:
+        "204":
+          description: Contraseña cambiada. Hay que volver a iniciar sesión.
+        "401":
+          description: El enlace no es válido, ya se usó o caducó.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      summary: Fijar una contraseña nueva con el enlace recibido
+      tags: *a1
+  /auth/verify-email/request:
+    post:
+      operationId: requestEmailVerification
+      parameters: []
+      responses:
+        "204":
+          description: Enviado, o innecesario porque ya estaba verificado.
+      security:
+        - BearerAuth: []
+      summary: Pedir el correo de confirmación
+      tags: *a1
+  /auth/verify-email:
+    post:
+      operationId: verifyEmail
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyEmailDto"
+      responses:
+        "204":
+          description: Correo confirmado.
+        "401":
+          description: El enlace no es válido, ya se usó o caducó.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      summary: Confirmar el correo con el enlace recibido
+      tags: *a1
+  /auth/me:
+    get:
+      operationId: getMe
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileDto"
+        "401":
+          description: Falta el access token, o no es válido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security:
+        - BearerAuth: []
+      summary: Perfil de la sesión actual
+      tags: *a1
+  /me/profile:
+    patch:
+      description: "El nombre y el avatar. El correo no se toca aquí: es la identidad con la que se inicia sesión y cambiarlo exige verificar antes el buzón nuevo."
+      operationId: updateProfile
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfileDto"
+        "401": &a2
+          description: Falta el access token, o no es válido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: &a3
+        - BearerAuth: []
+      summary: Cambiar los datos de la cuenta
+      tags: &a4
+        - Biblioteca
+  /me/library:
+    get:
+      description: Favoritos, álbumes guardados, artistas seguidos, historial reciente y preferencias, de una vez.
+      operationId: getLibrary
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryDto"
+        "401": *a2
+      security: *a3
+      summary: Biblioteca completa
+      tags: *a4
+  /me/favourites/{trackId}:
+    put:
+      operationId: addFavourite
+      parameters:
+        - name: trackId
+          required: true
+          in: path
+          description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
+          schema:
+            example: get-lucky
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FavouriteResultDto"
+        "401": *a2
+        "404":
+          description: No existe ninguna pista con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a3
+      summary: Marcar una pista como favorita
+      tags: *a4
+    delete:
+      operationId: removeFavourite
+      parameters:
+        - name: trackId
+          required: true
+          in: path
+          description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
+          schema:
+            example: get-lucky
+            type: string
+      responses:
+        "204":
+          description: "Quitada, o no estaba: el resultado es el mismo."
+        "401": *a2
+      security: *a3
+      summary: Quitar una pista de favoritos
+      tags: *a4
+  /me/albums/{albumId}:
+    put:
+      operationId: saveAlbum
+      parameters:
+        - name: albumId
+          required: true
+          in: path
+          description: UUID del álbum, su slug, o un identificador `al-*`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumSaveResultDto"
+        "401": *a2
+        "404":
+          description: No existe ningún álbum con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a3
+      summary: Guardar un álbum en la biblioteca
+      tags: *a4
+    delete:
+      operationId: removeAlbum
+      parameters:
+        - name: albumId
+          required: true
+          in: path
+          description: UUID del álbum, su slug, o un identificador `al-*`.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Quitado, o no estaba.
+        "401": *a2
+      security: *a3
+      summary: Quitar un álbum de la biblioteca
+      tags: *a4
+  /me/artists/{artistId}:
+    put:
+      operationId: followArtist
+      parameters:
+        - name: artistId
+          required: true
+          in: path
+          description: UUID del artista, su slug, o un identificador `ar-*`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtistFollowResultDto"
+        "401": *a2
+        "404":
+          description: No existe ningún artista con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a3
+      summary: Seguir a un artista
+      tags: *a4
+    delete:
+      operationId: unfollowArtist
+      parameters:
+        - name: artistId
+          required: true
+          in: path
+          description: UUID del artista, su slug, o un identificador `ar-*`.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Ya no se sigue, tanto si se seguía como si no.
+        "401": *a2
+      security: *a3
+      summary: Dejar de seguir a un artista
+      tags: *a4
+  /me/history:
+    post:
+      description: El cliente decide cuándo cuenta como escucha, y no manda nada si la sesión privada está activa.
+      operationId: logPlay
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogPlayDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryEntryDto"
+        "401": *a2
+        "404":
+          description: No existe ninguna pista con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a3
+      summary: Registrar una reproducción
+      tags: *a4
+    delete:
+      operationId: clearHistory
+      parameters: []
+      responses:
+        "204":
+          description: Historial vacío.
+        "401": *a2
+      security: *a3
+      summary: Vaciar el historial
+      tags: *a4
+  /me/history/{entryId}:
+    delete:
+      operationId: removeHistoryEntry
+      parameters:
+        - name: entryId
+          required: true
+          in: path
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "204":
+          description: "Borrada, o no era tuya: en ningún caso se dice cuál de las dos."
+        "401": *a2
+      security: *a3
+      summary: Borrar una entrada del historial
+      tags: *a4
+  /me/preferences:
+    get:
+      description: "Siempre responde con valores: una cuenta que no ha guardado nada recibe los de fábrica, no un hueco. Existe porque un recurso que se puede cambiar tiene que poder leerse sin pedir la biblioteca entera."
+      operationId: getPreferences
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferencesDto"
+        "401": *a2
+      security: *a3
+      summary: Preferencias de la cuenta
+      tags: *a4
+    patch:
+      description: Crea la fila si la cuenta todavía no tenía preferencias guardadas.
+      operationId: updatePreferences
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePreferencesDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferencesDto"
+        "401": *a2
+      security: *a3
+      summary: Cambiar las preferencias
+      tags: *a4
+  /me/playlists:
+    get:
+      operationId: listPlaylists
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlaylistDto"
+        "401": *a2
+      security: *a3
+      summary: Playlists propias
+      tags: *a4
+    post:
+      operationId: createPlaylist
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlaylistDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistDto"
+        "401": *a2
+        "404":
+          description: Alguna de las pistas indicadas no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a3
+      summary: Crear una playlist
+      tags: *a4
+  /me/playlists/{playlistId}:
+    patch:
+      description: "Si viene `trackIds`, sustituye la lista completa en ese orden: así se reordena y se quita a la vez."
+      operationId: updatePlaylist
+      parameters:
+        - name: playlistId
+          required: true
+          in: path
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlaylistDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistDto"
+        "401": *a2
+        "404":
+          description: No hay ninguna playlist tuya con ese identificador.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a3
+      summary: Editar una playlist
+      tags: *a4
+    delete:
+      operationId: deletePlaylist
+      parameters:
+        - name: playlistId
+          required: true
+          in: path
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "204":
+          description: Borrada, o no era tuya.
+        "401": *a2
+      security: *a3
+      summary: Borrar una playlist
+      tags: *a4
   /admin/tracks:
     get:
       description: Incluye las pistas en espera, que no aparecen en `/catalog`, y los álbumes a los que se pueden mover.
@@ -97,22 +682,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminCatalogDto"
-        "401": &a1
-          description: Falta la cabecera del token, o no es válido.
+        "401": &a5
+          description: Sin sesión válida ni token de servicio.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "503": &a2
-          description: El API no tiene `PULSE_ADMIN_TOKEN` configurado, así que el modo administrador está cerrado.
+        "403": &a6
+          description: La sesión es válida pero la cuenta no es ADMIN.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: &a3
+      security: &a7
         - AdminToken: []
+        - BearerAuth: []
       summary: Listar el catálogo completo para mantenimiento
-      tags: &a4
+      tags: &a8
         - Admin
     post:
       description: "Única puerta de entrada al catálogo. Es idempotente por slug: reenviar una pista ya publicada la actualiza en vez de duplicarla, así que una subida cortada se puede reintentar tal cual. Lo que llega incompleto entra pero queda en espera, y se publica solo cuando no falta nada (ver `pending`)."
@@ -137,7 +723,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a1
+        "401": *a5
+        "403": *a6
         "409":
           description: Ese mismo audio, byte a byte, ya está publicado con otro slug.
           content:
@@ -150,10 +737,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "503": *a2
-      security: *a3
+      security: *a7
       summary: Publicar una pista con su audio
-      tags: *a4
+      tags: *a8
   /admin/tracks/{identifier}:
     patch:
       operationId: updateAdminTrack
@@ -184,17 +770,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a1
+        "401": *a5
+        "403": *a6
         "404":
           description: No existe ninguna pista con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "503": *a2
-      security: *a3
+      security: *a7
       summary: Editar los metadatos de una pista
-      tags: *a4
+      tags: *a8
   /admin/albums/{id}:
     patch:
       description: El año es el único dato que retiene pistas fuera del catálogo. Al corregirlo se publican las que solo esperaban eso; una pista retirada a mano no vuelve.
@@ -226,17 +812,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a1
+        "401": *a5
+        "403": *a6
         "404":
           description: No existe ningún álbum con ese UUID.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "503": *a2
-      security: *a3
+      security: *a7
       summary: Editar un álbum y rescatar sus pistas en espera
-      tags: *a4
+      tags: *a8
+  /admin/artists/{id}:
+    patch:
+      description: "Géneros, reseña y retrato. El primer género es el que hereda cada pista suya que se publique sin género, así que corregirlo aquí evita que sigan cayendo en «Sin clasificar». Una publicación nunca pisa estos datos: este es el único sitio donde se cambian."
+      operationId: updateAdminArtist
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: UUID del artista.
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateArtistDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminArtistDto"
+        "400":
+          description: Datos inválidos o cuerpo sin nada que cambiar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "401": *a5
+        "403": *a6
+        "404":
+          description: No existe ningún artista con ese UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: *a7
+      summary: Editar la ficha de un artista
+      tags: *a8
   /admin/tracks/{identifier}/audio:
     post:
       description: El archivo se guarda por el hash de su contenido, así que el `streamUrl` que devuelve trae una versión nueva y los clientes no reutilizan el MP3 anterior.
@@ -268,7 +896,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a1
+        "401": *a5
+        "403": *a6
         "404":
           description: No existe ninguna pista con ese identificador.
           content:
@@ -281,10 +910,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "503": *a2
-      security: *a3
+      security: *a7
       summary: Reemplazar el audio de una pista ya publicada
-      tags: *a4
+      tags: *a8
   /admin/covers:
     post:
       description: Devuelve la ruta ya servible. Se guarda por el hash del contenido, así que subir dos veces la misma imagen no ocupa el doble.
@@ -309,26 +937,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a1
+        "401": *a5
+        "403": *a6
         "413":
           description: La imagen pasa de 5 MB.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "503": *a2
-      security: *a3
+      security: *a7
       summary: Subir una portada
-      tags: *a4
+      tags: *a8
 info:
   title: Pulse Music API
   description: |-
     Catálogo y reproducción de la biblioteca de Pulse.
 
-    Lo público —`/health`, `/catalog`, `/tracks/{id}/stream`, `/media/covers/{file}`— no pide
-    credenciales. Lo que hay bajo `/admin` mantiene el catálogo y va firmado con la cabecera
-    `X-Pulse-Admin-Token`; si el servidor no tiene `PULSE_ADMIN_TOKEN` configurado, esa mitad
-    responde 503 y queda cerrada.
+    La autenticación es global: salvo lo marcado como público —`/health`, `/catalog`,
+    `/tracks/{id}/stream`, `/media/covers/{file}` y el propio `/auth`—, toda ruta exige sesión.
+
+    `/tracks/{id}/stream` es público en el sentido de que no pide un Bearer: un `<audio src>` no
+    puede mandar cabeceras. En su lugar exige la firma que emite `/catalog` en cada `streamUrl`,
+    válida 24 horas. Sin ella responde 403, y la forma de conseguir una nueva es volver a pedir
+    el catálogo.
+
+    Lo que hay bajo `/admin` mantiene el catálogo y pide rol `ADMIN`. Se entra de dos maneras:
+    con la sesión de una cuenta administradora, o con la cabecera `X-Pulse-Admin-Token`, que
+    queda reservada a los procesos automatizados. Un credencial válido pero sin rol recibe 403,
+    no 401: no hay nada que renovar.
+
+    Lo que hay bajo `/auth` abre y renueva sesiones. El access token es un JWT de vida corta que
+    viaja en `Authorization: Bearer`; el refresh token dura semanas y sale en una cookie
+    `httpOnly` que solo se manda a `/v1/auth`. Un cliente sin cookies —la app móvil— lo pide en
+    el cuerpo con la cabecera `X-Pulse-Client: native`.
 
     Toda ruta cuelga del prefijo `/v1`, ya incluido en la URL del servidor.
   version: 0.1.0
@@ -336,8 +977,12 @@ info:
 tags:
   - name: Health
     description: Señal de vida del proceso
+  - name: Sesión
+    description: Registro, login y renovación de tokens
   - name: Catálogo
     description: Lo que consumen la web y la app
+  - name: Biblioteca
+    description: Favoritos, playlists e historial de cada cuenta
   - name: Reproducción
     description: Entrega del audio, con soporte de rangos
   - name: Media
@@ -353,7 +998,12 @@ components:
       type: apiKey
       in: header
       name: X-Pulse-Admin-Token
-      description: Secreto compartido con quien mantiene el catálogo. Igual a `PULSE_ADMIN_TOKEN` en el servidor.
+      description: "Credencial de servicio para procesos sin persona detrás, igual a `PULSE_ADMIN_TOKEN` en el servidor. No es para el navegador: desde la web se entra con una cuenta de rol ADMIN."
+    BearerAuth:
+      scheme: bearer
+      bearerFormat: JWT
+      type: http
+      description: "Access token devuelto por `/auth/login`. Caduca a los 15 minutos: renuévalo en `/auth/refresh`."
   schemas:
     HealthDto:
       type: object
@@ -400,6 +1050,14 @@ components:
           type: array
           items:
             type: string
+        followers:
+          type: number
+          example: 0
+          description: Cuentas que siguen al artista. Real, no estimado.
+        plays:
+          type: number
+          example: 0
+          description: Reproducciones registradas de todas sus pistas.
       required:
         - id
         - slug
@@ -407,6 +1065,8 @@ components:
         - bio
         - photoUrl
         - genres
+        - followers
+        - plays
     ReleaseType:
       type: string
       enum:
@@ -497,6 +1157,10 @@ components:
           type: string
           description: URL de reproducción. Lleva `?v=<updatedAt>` para que el cliente no reutilice el MP3 anterior cuando se reemplaza el audio.
           example: http://localhost:4000/v1/tracks/9f86d0.../stream?v=1754923200000
+        plays:
+          type: number
+          example: 0
+          description: Reproducciones registradas de esta pista.
       required:
         - id
         - slug
@@ -509,6 +1173,90 @@ components:
         - codec
         - coverUrl
         - streamUrl
+        - plays
+    CatalogGenreDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: rock-alternativo
+        name:
+          type: string
+          example: Rock alternativo
+        color:
+          type: string
+          example: "#E14B34"
+          description: Color de presentación.
+      required:
+        - id
+        - slug
+        - name
+        - color
+    CatalogMoodDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: concentracion
+        name:
+          type: string
+          example: Concentración
+        description:
+          type: string
+          nullable: true
+        icon:
+          type: string
+          example: Target
+          description: Nombre del icono de lucide que dibuja el cliente.
+        color:
+          type: string
+          example: "#587891"
+        trackIds:
+          description: UUIDs de las pistas, ya en orden.
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - slug
+        - name
+        - description
+        - icon
+        - color
+        - trackIds
+    CatalogPlaylistDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: Radiohead esencial
+        description:
+          type: string
+          nullable: true
+        coverUrl:
+          type: string
+          nullable: true
+          description: URL absoluta de la portada.
+        trackIds:
+          description: UUIDs de las pistas, ya en orden.
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - title
+        - description
+        - coverUrl
+        - trackIds
     CatalogDto:
       type: object
       properties:
@@ -524,10 +1272,99 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CatalogTrackDto"
+        genres:
+          description: Solo los géneros presentes en el catálogo.
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogGenreDto"
+        moods:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogMoodDto"
+        playlists:
+          description: Playlists de Pulse, sin dueño. Las del usuario van en `/me/playlists`.
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogPlaylistDto"
       required:
         - artists
         - albums
         - tracks
+        - genres
+        - moods
+        - playlists
+    RegisterDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: ana@ejemplo.com
+          description: Se guarda en minúsculas.
+        password:
+          type: string
+          example: una-contraseña-larga
+          minLength: 10
+          maxLength: 128
+          description: "Nunca se almacena: solo su hash argon2id."
+        displayName:
+          type: string
+          example: Ana
+          description: Si falta, se usa la parte del correo anterior a la arroba.
+      required:
+        - email
+        - password
+    Role:
+      type: string
+      enum:
+        - USER
+        - ADMIN
+    UserProfileDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          example: ana@ejemplo.com
+        displayName:
+          type: string
+          example: Ana
+        avatarUrl:
+          type: string
+          nullable: true
+        role:
+          allOf:
+            - $ref: "#/components/schemas/Role"
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - email
+        - displayName
+        - avatarUrl
+        - role
+        - createdAt
+    SessionDto:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: "JWT de acceso. Va en la cabecera `Authorization: Bearer`."
+        expiresIn:
+          type: number
+          example: 900
+          description: Segundos de vida que le quedan al access token.
+        user:
+          $ref: "#/components/schemas/UserProfileDto"
+        refreshToken:
+          type: string
+          description: "Solo para clientes nativos, que lo piden con la cabecera `X-Pulse-Client: native`. En el navegador este campo no viene: el refresh viaja en una cookie `httpOnly`."
+      required:
+        - accessToken
+        - expiresIn
+        - user
     ApiErrorDto:
       type: object
       properties:
@@ -549,6 +1386,318 @@ components:
         - statusCode
         - message
         - error
+    LoginDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: ana@ejemplo.com
+        password:
+          type: string
+          example: una-contraseña-larga
+      required:
+        - email
+        - password
+    RefreshDto:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: "Solo para clientes nativos. En el navegador se ignora: manda la cookie."
+    ForgotPasswordDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: ana@ejemplo.com
+      required:
+        - email
+    ResetPasswordDto:
+      type: object
+      properties:
+        token:
+          type: string
+          description: El token que viaja en el enlace del correo.
+        password:
+          type: string
+          minLength: 10
+          maxLength: 128
+      required:
+        - token
+        - password
+    VerifyEmailDto:
+      type: object
+      properties:
+        token:
+          type: string
+          description: El token que viaja en el enlace del correo.
+      required:
+        - token
+    UpdateProfileDto:
+      type: object
+      properties:
+        displayName:
+          type: string
+          example: Ana
+        avatarUrl:
+          type: string
+          nullable: true
+          description: "`null` quita el avatar."
+    HistoryEntryDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        trackId:
+          type: string
+          format: uuid
+        playedAt:
+          type: string
+          format: date-time
+        progress:
+          type: number
+          example: 42
+          description: Segundos reproducidos.
+        completed:
+          type: boolean
+      required:
+        - id
+        - trackId
+        - playedAt
+        - progress
+        - completed
+    PreferencesDto:
+      type: object
+      properties:
+        theme:
+          type: string
+          example: dark
+        language:
+          type: string
+          example: es
+        streamQuality:
+          type: string
+          example: high
+        downloadQuality:
+          type: string
+          example: high
+        autoplay:
+          type: boolean
+        crossfade:
+          type: number
+          example: 0
+        normalize:
+          type: boolean
+        privateSession:
+          type: boolean
+        favouriteGenres:
+          example:
+            - Rock alternativo
+            - Psicodelia
+          type: array
+          items:
+            type: string
+      required:
+        - theme
+        - language
+        - streamQuality
+        - downloadQuality
+        - autoplay
+        - crossfade
+        - normalize
+        - privateSession
+        - favouriteGenres
+    LibraryDto:
+      type: object
+      properties:
+        favourites:
+          description: UUIDs de las pistas marcadas, de la más reciente a la más antigua.
+          type: array
+          items:
+            type: string
+        savedAlbums:
+          description: UUIDs de los álbumes guardados.
+          type: array
+          items:
+            type: string
+        followedArtists:
+          description: UUIDs de los artistas seguidos.
+          type: array
+          items:
+            type: string
+        history:
+          description: Las 100 reproducciones más recientes.
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoryEntryDto"
+        preferences:
+          nullable: true
+          description: "`null` si la cuenta todavía no tiene preferencias guardadas."
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/PreferencesDto"
+      required:
+        - favourites
+        - savedAlbums
+        - followedArtists
+        - history
+        - preferences
+    FavouriteResultDto:
+      type: object
+      properties:
+        trackId:
+          type: string
+          format: uuid
+          description: UUID canónico, sea cual sea el identificador que se mandó.
+      required:
+        - trackId
+    AlbumSaveResultDto:
+      type: object
+      properties:
+        albumId:
+          type: string
+          format: uuid
+      required:
+        - albumId
+    ArtistFollowResultDto:
+      type: object
+      properties:
+        artistId:
+          type: string
+          format: uuid
+      required:
+        - artistId
+    LogPlayDto:
+      type: object
+      properties:
+        trackId:
+          type: string
+          example: get-lucky
+          description: UUID de la pista, su slug, o un identificador `tr-*`.
+        progress:
+          type: number
+          example: 42
+          description: Segundos reproducidos.
+        completed:
+          type: boolean
+          description: Cierto si la pista llegó al final.
+      required:
+        - trackId
+    UpdatePreferencesDto:
+      type: object
+      properties:
+        theme:
+          type: string
+          enum:
+            - dark
+            - light
+        language:
+          type: string
+          enum:
+            - es
+            - en
+        streamQuality:
+          type: string
+          enum: &a9
+            - low
+            - normal
+            - high
+            - max
+        downloadQuality:
+          type: string
+          enum: *a9
+        autoplay:
+          type: boolean
+        crossfade:
+          type: number
+          example: 6
+          description: Segundos de fundido entre pistas.
+        normalize:
+          type: boolean
+        privateSession:
+          type: boolean
+          description: Con la sesión privada activa el cliente deja de registrar reproducciones.
+        favouriteGenres:
+          description: Sustituye la lista entera. Nombres de género tal y como los publica el catálogo.
+          type: array
+          items:
+            type: string
+    PlaylistDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: Para correr
+        description:
+          type: string
+          nullable: true
+        coverUrl:
+          type: string
+          nullable: true
+        isPublic:
+          type: boolean
+        collaborative:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+        trackIds:
+          description: UUIDs de las pistas, ya en orden.
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - title
+        - description
+        - coverUrl
+        - isPublic
+        - collaborative
+        - updatedAt
+        - trackIds
+    CreatePlaylistDto:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Para correr
+        description:
+          type: string
+          example: Lo que suena cuando salgo temprano.
+        coverUrl:
+          type: string
+          description: URL absoluta o ruta `/media/covers/...`.
+        trackIds:
+          description: En el orden en que deben quedar.
+          type: array
+          items:
+            type: string
+      required:
+        - title
+    UpdatePlaylistDto:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Para correr al amanecer
+        description:
+          type: string
+          nullable: true
+        coverUrl:
+          type: string
+          nullable: true
+          description: "`null` quita la portada."
+        isPublic:
+          type: boolean
+        trackIds:
+          description: Sustituye la lista entera, en este orden.
+          type: array
+          items:
+            type: string
     AdminTrackDto:
       type: object
       properties:
@@ -671,11 +1820,25 @@ components:
           type: string
           nullable: true
           description: "`null` cuando el artista no tiene retrato. A diferencia del catálogo público, aquí no se rellena con el placeholder: quien vaya a copiar la foto necesita distinguir un retrato real del relleno que llevan todos."
+        genres:
+          example:
+            - Reggae
+            - Dancehall
+          description: "Géneros curados del artista, del más general al más específico. Los publica este endpoint porque quien sube pistas los necesita para no mandarlas sin género: sin ellos aquí, un cliente solo podía enviar una lista vacía y toda pista nueva caía en «Sin clasificar»."
+          type: array
+          items:
+            type: string
+        bio:
+          type: string
+          nullable: true
+          description: Reseña del artista, si la tiene.
       required:
         - id
         - slug
         - name
         - photoUrl
+        - genres
+        - bio
     AdminCatalogDto:
       type: object
       properties:
@@ -771,6 +1934,29 @@ components:
         - year
         - coverUrl
         - published
+    UpdateArtistDto:
+      type: object
+      properties:
+        genres:
+          maxItems: 8
+          example:
+            - Reggae
+            - Dancehall
+          description: "Géneros del artista, del más general al más específico. El primero es el que hereda una pista suya publicada sin género, así que el orden no es decorativo. Sustituye la lista entera: mandar `[]` la deja vacía."
+          type: array
+          items:
+            type: string
+        bio:
+          type: string
+          nullable: true
+          maxLength: 4000
+          description: Reseña del artista. `null` la quita.
+        photoUrl:
+          type: string
+          nullable: true
+          maxLength: 2048
+          example: /media/covers/9f86d0….jpg
+          description: Retrato del artista. `null` lo quita y el catálogo público vuelve al relleno.
     ReplaceAudioFormDto:
       type: object
       properties:
@@ -882,6 +2068,10 @@ components:
           maxLength: 80
           example: Electronic
           description: Si falta se hereda del artista, y en último término «Sin clasificar».
+        explicit:
+          type: boolean
+          example: false
+          description: "Marca de contenido explícito. Se puede fijar al publicar y no solo editar después: cuando solo existía en el `PATCH`, toda pista entraba como no explícita y había que corregirla a mano una por una. Omitirlo no es lo mismo que mandar `false`: en una pista que ya existe, omitirlo deja la marca como estaba, para que quien publica sin saberlo no borre lo que alguien corrigió a mano."
       required:
         - slug
         - title

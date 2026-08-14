@@ -16,11 +16,28 @@ En Render: **New → Blueprint**, apuntando a `estaban2905/pulse-api`. Lee
 [`render.yaml`](render.yaml) y crea el servicio web, la base y el disco de
 10 GB.
 
-`PULSE_ADMIN_TOKEN` y `JWT_SECRET` se generan solos. Cópialos del panel
-(*Environment*) si los necesitas desde un cliente.
+`PULSE_ADMIN_TOKEN` y los tres secretos de firma —`JWT_ACCESS_SECRET`,
+`JWT_REFRESH_SECRET` y `MEDIA_SIGNING_SECRET`— se generan solos. Cópialos del
+panel (*Environment*) si los necesitas desde un cliente.
+
+Render pedirá dos valores al crear el blueprint, porque dependen de dónde quede
+la web y no se pueden deducir aquí:
+
+| Variable | Qué es | Ejemplo |
+|---|---|---|
+| `PUBLIC_WEB_URL` | Base de los enlaces de restablecer contraseña y verificar correo | `https://pulse.app` |
+| `CORS_ORIGINS` | Orígenes autorizados a llamar con credenciales, separados por comas | `https://pulse.app,https://www.pulse.app` |
+
+Los dos apuntan a la **web**, no al API. Si `CORS_ORIGINS` queda vacío el
+servicio arranca igual, pero ningún navegador podrá usarlo: en producción no hay
+lista de reserva, y el único aviso es una línea en el log del arranque.
 
 Si el servicio queda con un nombre distinto de `pulse-api`, corrige
 `PUBLIC_API_URL` para que apunte a su dominio real.
+
+`COOKIE_SAMESITE` viene fijado a `none` porque web y API quedan en dominios
+distintos y el navegador descartaría una cookie `lax`. Si algún día comparten
+dominio de nivel superior (`pulse.app` y `api.pulse.app`), cámbialo a `lax`.
 
 ### Coste aproximado
 

@@ -10,23 +10,23 @@ import {
   PayloadTooLargeException,
   Post,
   Req,
-  UnsupportedMediaTypeException,
-  UseGuards
+  UnsupportedMediaTypeException
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
   ApiExtraModels,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiPayloadTooLargeResponse,
   ApiSecurity,
-  ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse
 } from '@nestjs/swagger';
@@ -41,18 +41,21 @@ import {
   ReplaceAudioFieldsDto,
   ReplaceAudioFormDto,
   UpdateAlbumDto,
+  UpdateArtistDto,
   UpdateTrackDto,
   UploadCoverFormDto
 } from './admin.dto';
 import {
+  AdminArtistDto,
   AdminCatalogDto,
   AdminTrackDto,
   CoverUploadResultDto,
   PublishTrackResultDto,
   UpdateAlbumResultDto
 } from './admin.responses';
-import { AdminTokenGuard } from './admin.guard';
 import { AdminService } from './admin.service';
+import { AllowServiceToken, Roles } from '../auth/auth.decorators';
+import { Role } from '../../generated/prisma/enums';
 
 const MAX_AUDIO_BYTES = 60 * 1024 * 1024;
 const MAX_COVER_BYTES = 5 * 1024 * 1024;
@@ -162,15 +165,22 @@ async function readMultipart(request: FastifyRequest, fieldName: string, maxByte
   return { file: uploadedFile, fields };
 }
 
+/**
+ * Mantenimiento del catálogo. Dos formas de entrar, y ninguna más:
+ *
+ * una sesión con rol `ADMIN` —la que usa el mantenedor desde la web— o la
+ * cabecera `X-Pulse-Admin-Token`, reservada a los procesos sin persona detrás
+ * como `pulse-dl`. El token dejó de ser la llave del navegador: un secreto
+ * compartido que abre el catálogo entero no puede vivir en un cliente.
+ */
 @ApiTags('Admin')
+@ApiBearerAuth('BearerAuth')
 @ApiSecurity('AdminToken')
-@ApiUnauthorizedResponse({ description: 'Falta la cabecera del token, o no es válido.', type: ApiErrorDto })
-@ApiServiceUnavailableResponse({
-  description: 'El API no tiene `PULSE_ADMIN_TOKEN` configurado, así que el modo administrador está cerrado.',
-  type: ApiErrorDto
-})
+@ApiUnauthorizedResponse({ description: 'Sin sesión válida ni token de servicio.', type: ApiErrorDto })
+@ApiForbiddenResponse({ description: 'La sesión es válida pero la cuenta no es ADMIN.', type: ApiErrorDto })
 @Controller('admin')
-@UseGuards(AdminTokenGuard)
+@Roles(Role.ADMIN)
+@AllowServiceToken()
 export class AdminController {
   constructor(private readonly admin: AdminService) {}
 
@@ -222,6 +232,26 @@ export class AdminController {
     @Headers('x-forwarded-proto') protocol = 'http'
   ) {
     return this.admin.updateAlbum(id, body, apiUrl(host, protocol));
+  }
+
+  @Patch('artists/:id')
+  @ApiOperation({
+    operationId: 'updateAdminArtist',
+    summary: 'Editar la ficha de un artista',
+    description:
+      'Géneros, reseña y retrato. El primer género es el que hereda cada pista suya que se publique sin género, así que corregirlo aquí evita que sigan cayendo en «Sin clasificar». Una publicación nunca pisa estos datos: este es el único sitio donde se cambian.'
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'UUID del artista.' })
+  @ApiOkResponse({ type: AdminArtistDto })
+  @ApiBadRequestResponse({ description: 'Datos inválidos o cuerpo sin nada que cambiar.', type: ApiErrorDto })
+  @ApiNotFoundResponse({ description: 'No existe ningún artista con ese UUID.', type: ApiErrorDto })
+  updateArtist(
+    @Param('id') id: string,
+    @Body() body: UpdateArtistDto,
+    @Headers('host') host = 'localhost:4000',
+    @Headers('x-forwarded-proto') protocol = 'http'
+  ) {
+    return this.admin.updateArtist(id, body, apiUrl(host, protocol));
   }
 
   @Post('tracks/:identifier/audio')

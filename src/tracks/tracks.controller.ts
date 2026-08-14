@@ -1,5 +1,6 @@
-import { Controller, Get, Headers, Param, Res } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Headers, Param, Query, Res } from '@nestjs/common';
 import {
+  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOperation,
@@ -12,12 +13,25 @@ import {
 import type { FastifyReply } from 'fastify';
 import { createReadStream, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { Public } from '../auth/auth.decorators';
 import { CatalogService } from '../catalog/catalog.service';
+import { MediaSigningService } from '../config/media-signing.service';
 
+/**
+ * Entrega del audio.
+ *
+ * `@Public()` no significa abierto: significa que no se pide un Bearer, porque
+ * un `<audio src>` no puede mandar cabeceras. El permiso viaja firmado en la
+ * propia URL, y sin firma válida esto no devuelve un byte.
+ */
 @ApiTags('Reproducción')
 @Controller('tracks')
+@Public()
 export class TracksController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly mediaSigning: MediaSigningService
+  ) {}
 
   @Get(':id/stream')
   @ApiOperation({
@@ -37,13 +51,29 @@ export class TracksController {
     description:
       'Marca de versión que emite el catálogo. Solo rompe la caché del cliente cuando se reemplaza el audio; el servidor la ignora.'
   })
+  @ApiQuery({ name: 'exp', required: true, description: 'Caducidad de la firma, en segundos desde la época.' })
+  @ApiQuery({ name: 'sig', required: true, description: 'Firma que emite el catálogo junto a la URL.' })
   @ApiHeader({ name: 'Range', required: false, description: 'Por ejemplo `bytes=0-65535`.' })
   @ApiProduces('audio/mpeg')
   @ApiResponse({ status: 200, description: 'MP3 completo.' })
   @ApiResponse({ status: 206, description: 'Trozo del MP3 pedido por `Range`.' })
+  @ApiForbiddenResponse({ description: 'La firma falta, no cuadra, o ya caducó. Vuelve a pedir `/catalog`.' })
   @ApiNotFoundResponse({ description: 'No existe ninguna pista con ese identificador.' })
   @ApiResponse({ status: 416, description: 'El `Range` pedido cae fuera del archivo.' })
-  async stream(@Param('id') id: string, @Headers('range') range: string | undefined, @Res() reply: FastifyReply) {
+  async stream(
+    @Param('id') id: string,
+    @Query('exp') exp: string | undefined,
+    @Query('sig') sig: string | undefined,
+    @Headers('range') range: string | undefined,
+    @Res() reply: FastifyReply
+  ) {
+    // Antes de tocar la base de datos ni el disco: una firma inválida no
+    // merece ni una consulta, y comprobarlo aquí evita además confirmar si
+    // la pista existe a quien no trae permiso.
+    if (!this.mediaSigning.verify(id, exp, sig)) {
+      throw new ForbiddenException('Enlace de audio inválido o caducado');
+    }
+
     const track = await this.catalog.getTrack(id);
     const filePath = join(process.cwd(), 'storage', 'audio', track.storageKey);
     const size = statSync(filePath).size;

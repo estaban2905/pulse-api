@@ -105,6 +105,20 @@ export class AdminArtistDto {
       'necesita distinguir un retrato real del relleno que llevan todos.'
   })
   photoUrl!: string | null;
+
+  @ApiProperty({
+    type: [String],
+    example: ['Reggae', 'Dancehall'],
+    description:
+      'Géneros curados del artista, del más general al más específico. Los publica este ' +
+      'endpoint porque quien sube pistas los necesita para no mandarlas sin género: sin ' +
+      'ellos aquí, un cliente solo podía enviar una lista vacía y toda pista nueva caía ' +
+      'en «Sin clasificar».'
+  })
+  genres!: string[];
+
+  @ApiProperty({ type: String, nullable: true, description: 'Reseña del artista, si la tiene.' })
+  bio!: string | null;
 }
 
 export class AdminCatalogDto {

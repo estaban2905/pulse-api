@@ -4,6 +4,8 @@ import type { FastifyReply } from 'fastify';
 import { createReadStream, existsSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 
+import { Public } from '../auth/auth.decorators';
+
 const contentTypes: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -11,8 +13,12 @@ const contentTypes: Record<string, string> = {
   '.webp': 'image/webp'
 };
 
+// Las portadas quedan públicas: son la carátula que ya se ve en el catálogo, y
+// una imagen tras un token no se puede poner en un `<img src>` sin trabajo
+// extra que aquí no compra nada.
 @ApiTags('Media')
 @Controller('media')
+@Public()
 export class MediaController {
   @Get('covers/:file')
   @ApiOperation({

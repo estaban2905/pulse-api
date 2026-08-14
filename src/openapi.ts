@@ -18,10 +18,23 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
       [
         'Catálogo y reproducción de la biblioteca de Pulse.',
         '',
-        'Lo público —`/health`, `/catalog`, `/tracks/{id}/stream`, `/media/covers/{file}`— no pide',
-        'credenciales. Lo que hay bajo `/admin` mantiene el catálogo y va firmado con la cabecera',
-        '`X-Pulse-Admin-Token`; si el servidor no tiene `PULSE_ADMIN_TOKEN` configurado, esa mitad',
-        'responde 503 y queda cerrada.',
+        'La autenticación es global: salvo lo marcado como público —`/health`, `/catalog`,',
+        '`/tracks/{id}/stream`, `/media/covers/{file}` y el propio `/auth`—, toda ruta exige sesión.',
+        '',
+        '`/tracks/{id}/stream` es público en el sentido de que no pide un Bearer: un `<audio src>` no',
+        'puede mandar cabeceras. En su lugar exige la firma que emite `/catalog` en cada `streamUrl`,',
+        'válida 24 horas. Sin ella responde 403, y la forma de conseguir una nueva es volver a pedir',
+        'el catálogo.',
+        '',
+        'Lo que hay bajo `/admin` mantiene el catálogo y pide rol `ADMIN`. Se entra de dos maneras:',
+        'con la sesión de una cuenta administradora, o con la cabecera `X-Pulse-Admin-Token`, que',
+        'queda reservada a los procesos automatizados. Un credencial válido pero sin rol recibe 403,',
+        'no 401: no hay nada que renovar.',
+        '',
+        'Lo que hay bajo `/auth` abre y renueva sesiones. El access token es un JWT de vida corta que',
+        'viaja en `Authorization: Bearer`; el refresh token dura semanas y sale en una cookie',
+        '`httpOnly` que solo se manda a `/v1/auth`. Un cliente sin cookies —la app móvil— lo pide en',
+        'el cuerpo con la cabecera `X-Pulse-Client: native`.',
         '',
         'Toda ruta cuelga del prefijo `/v1`, ya incluido en la URL del servidor.'
       ].join('\n')
@@ -33,12 +46,24 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
         type: 'apiKey',
         in: 'header',
         name: 'X-Pulse-Admin-Token',
-        description: 'Secreto compartido con quien mantiene el catálogo. Igual a `PULSE_ADMIN_TOKEN` en el servidor.'
+        description:
+          'Credencial de servicio para procesos sin persona detrás, igual a `PULSE_ADMIN_TOKEN` en el servidor. No es para el navegador: desde la web se entra con una cuenta de rol ADMIN.'
       },
       'AdminToken'
     )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Access token devuelto por `/auth/login`. Caduca a los 15 minutos: renuévalo en `/auth/refresh`.'
+      },
+      'BearerAuth'
+    )
     .addTag('Health', 'Señal de vida del proceso')
+    .addTag('Sesión', 'Registro, login y renovación de tokens')
     .addTag('Catálogo', 'Lo que consumen la web y la app')
+    .addTag('Biblioteca', 'Favoritos, playlists e historial de cada cuenta')
     .addTag('Reproducción', 'Entrega del audio, con soporte de rangos')
     .addTag('Media', 'Portadas')
     .addTag('Admin', 'Mantenimiento del catálogo')
