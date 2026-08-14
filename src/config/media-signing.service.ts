@@ -3,6 +3,12 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { SecurityConfig } from './security.config';
 
+/**
+ * Cada cuánto cambia una firma, en segundos. Ver `sign`: mantenerla estable
+ * dentro de la ventana es lo que permite al navegador cachear el audio.
+ */
+const SIGNATURE_WINDOW_SECONDS = 60 * 60;
+
 /** Parámetros que acompañan a una URL firmada. */
 export interface MediaSignature {
   /** Caducidad, en segundos desde la época. */
@@ -29,9 +35,22 @@ export class MediaSigningService {
     return createHmac('sha256', this.config.mediaSigningSecret).update(`${trackId}:${exp}`, 'utf8').digest();
   }
 
-  /** Firma para una pista, válida durante el TTL configurado. */
+  /**
+   * Firma para una pista, válida durante el TTL configurado.
+   *
+   * La caducidad se calcula desde el principio de la hora en curso y no desde
+   * el instante exacto, así que dos cargas del catálogo en la misma hora
+   * devuelven la misma URL. Con la hora exacta cada carga inventaba una URL
+   * distinta, y como la clave de caché del navegador es la URL entera, el
+   * reproductor volvía a pedir lo que ya tenía guardado.
+   *
+   * El precio es que la primera firma de cada hora vive una hora menos de lo
+   * nominal, lo cual sobra con un TTL de un día.
+   */
   sign(trackId: string, now = Date.now()): MediaSignature {
-    const exp = Math.floor(now / 1000) + this.config.mediaUrlTtlSeconds;
+    const seconds = Math.floor(now / 1000);
+    const windowStart = seconds - (seconds % SIGNATURE_WINDOW_SECONDS);
+    const exp = windowStart + this.config.mediaUrlTtlSeconds;
     return { exp, sig: this.digest(trackId, exp).toString('base64url') };
   }
 

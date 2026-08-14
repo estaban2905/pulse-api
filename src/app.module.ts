@@ -13,10 +13,12 @@ import { MeModule } from './me/me.module';
 import { AuthenticationGuard } from './auth/authentication.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { SecurityModule } from './config/security.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
     SecurityModule,
+    StorageModule,
     PrismaModule,
     // Techo general contra el abuso automatizado. Los endpoints que cuestan
     // caro —los de contraseña— aprietan mucho más con `@Throttle`.

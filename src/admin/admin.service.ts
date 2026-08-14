@@ -1,12 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 import { AudioCodec } from '../../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { MediaSigningService } from '../config/media-signing.service';
+import { StorageService } from '../storage/storage.service';
 import {
   UUID_PATTERN,
   type PublishTrackDto,
@@ -40,9 +38,11 @@ interface UploadedFile {
   mimetype: string;
 }
 
-function absoluteUrl(apiUrl: string, value: string): string {
+function absoluteUrl(storage: StorageService, apiUrl: string, value: string): string {
   if (/^https?:\/\//i.test(value)) return value;
-  return `${apiUrl}${value.startsWith('/') ? value : `/${value}`}`;
+  const path = value.startsWith('/') ? value : `/${value}`;
+  // Las portadas viven en el almacenamiento y el resto lo sirve este API.
+  return storage.publicMediaUrl(path) ?? `${apiUrl}${path}`;
 }
 
 function isMp3(buffer: Buffer): boolean {
@@ -66,6 +66,13 @@ function isMp3(buffer: Buffer): boolean {
   return false;
 }
 
+/** El almacenamiento no adivina el tipo por la extensión: hay que declararlo. */
+const COVER_CONTENT_TYPES: Record<'jpg' | 'png' | 'webp', string> = {
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp'
+};
+
 function imageExtension(buffer: Buffer): 'jpg' | 'png' | 'webp' | null {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
   if (
@@ -80,22 +87,12 @@ function imageExtension(buffer: Buffer): 'jpg' | 'png' | 'webp' | null {
   return null;
 }
 
-async function writeStableFile(directory: string, filename: string, buffer: Buffer): Promise<void> {
-  await mkdir(directory, { recursive: true });
-  try {
-    await writeFile(join(directory, filename), buffer, { flag: fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY });
-  } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-    if (code !== 'EEXIST') throw error;
-    // Same content hash means the existing immutable file can be reused.
-  }
-}
-
 @Injectable()
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly mediaSigning: MediaSigningService
+    private readonly mediaSigning: MediaSigningService,
+    private readonly storage: StorageService
   ) {}
 
   private async findTrack(identifier: string) {
@@ -116,7 +113,7 @@ export class AdminService {
   }
 
   private toAdminTrack(track: Awaited<ReturnType<AdminService['findTrack']>>, apiUrl: string) {
-    const albumCoverUrl = absoluteUrl(apiUrl, track.album.coverUrl);
+    const albumCoverUrl = absoluteUrl(this.storage, apiUrl, track.album.coverUrl);
     return {
       id: track.id,
       slug: track.slug,
@@ -129,7 +126,7 @@ export class AdminService {
       genre: track.genre,
       explicit: track.explicit,
       codec: track.codec,
-      coverUrl: track.coverUrl ? absoluteUrl(apiUrl, track.coverUrl) : albumCoverUrl,
+      coverUrl: track.coverUrl ? absoluteUrl(this.storage, apiUrl, track.coverUrl) : albumCoverUrl,
       ownCoverUrl: track.coverUrl,
       albumCoverUrl,
       // Firmada igual que en el catálogo: el mantenedor reproduce el audio con
@@ -170,7 +167,7 @@ export class AdminService {
         artistId: album.artistId,
         artistName: album.artist.name,
         year: album.year,
-        coverUrl: absoluteUrl(apiUrl, album.coverUrl)
+        coverUrl: absoluteUrl(this.storage, apiUrl, album.coverUrl)
       })),
       artists: artists.map((artist) => ({
         id: artist.id,
@@ -179,7 +176,7 @@ export class AdminService {
         // Sin foto se devuelve null, no el placeholder: quien la vaya a copiar
         // necesita distinguir «tiene retrato» de «tiene el relleno de todos»,
         // y el catálogo público, que sí rellena, no puede responder a eso.
-        photoUrl: artist.photoUrl ? absoluteUrl(apiUrl, artist.photoUrl) : null,
+        photoUrl: artist.photoUrl ? absoluteUrl(this.storage, apiUrl, artist.photoUrl) : null,
         // Sin esto, quien publica no tenía de dónde sacar el género y mandaba
         // la lista vacía: así fue como el 85 % del catálogo acabó en
         // «Sin clasificar».
@@ -220,7 +217,9 @@ export class AdminService {
     const digest = createHash('sha256').update(file.buffer).digest('hex');
     const safeSlug = existing.slug.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'track';
     const storageKey = `${safeSlug}-${digest}.mp3`;
-    await writeStableFile(join(process.cwd(), 'storage', 'audio'), storageKey, file.buffer);
+    // Sobrescribir no destruye nada: el nombre lleva el hash del contenido, así
+    // que volver a subir la misma clave es volver a subir los mismos bytes.
+    await this.storage.putAudio(storageKey, file.buffer);
 
     const track = await this.prisma.track.update({
       where: { id: existing.id },
@@ -269,7 +268,7 @@ export class AdminService {
       );
     }
 
-    await writeStableFile(join(process.cwd(), 'storage', 'audio'), storageKey, audio.buffer);
+    await this.storage.putAudio(storageKey, audio.buffer);
 
     const coverUrl = cover ? (await this.uploadCover(cover)).coverUrl : null;
 
@@ -410,7 +409,7 @@ export class AdminService {
       slug: updated.slug,
       title: updated.title,
       year: updated.year,
-      coverUrl: absoluteUrl(apiUrl, updated.coverUrl),
+      coverUrl: absoluteUrl(this.storage, apiUrl, updated.coverUrl),
       published
     };
   }
@@ -438,7 +437,7 @@ export class AdminService {
       id: updated.id,
       slug: updated.slug,
       name: updated.name,
-      photoUrl: updated.photoUrl ? absoluteUrl(apiUrl, updated.photoUrl) : null,
+      photoUrl: updated.photoUrl ? absoluteUrl(this.storage, apiUrl, updated.photoUrl) : null,
       genres: updated.genres,
       bio: updated.bio
     };
@@ -449,7 +448,9 @@ export class AdminService {
     if (!extension) throw new BadRequestException('cover must contain a valid JPG, PNG or WebP image');
     const digest = createHash('sha256').update(file.buffer).digest('hex');
     const filename = `${digest}.${extension}`;
-    await writeStableFile(join(process.cwd(), 'storage', 'covers'), filename, file.buffer);
+    await this.storage.putCover(filename, file.buffer, COVER_CONTENT_TYPES[extension]);
+    // Se sigue guardando la ruta relativa, no la URL del almacenamiento: así un
+    // cambio de proveedor no obliga a reescribir cada fila de la base.
     return { coverUrl: `/media/covers/${filename}` };
   }
 }

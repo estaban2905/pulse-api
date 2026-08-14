@@ -1,36 +1,41 @@
 # Desplegar pulse-api en Render
 
-La API guarda el audio en el disco local y el catálogo en PostgreSQL, así que
-mover el servicio son dos migraciones distintas: la base de datos y los 6,0 GB
-de `storage/`.
+El catálogo vive en PostgreSQL y los archivos en Cloudflare R2, así que montar
+esto son dos migraciones distintas: la base de datos y los 6,0 GB de `storage/`.
 
 Ninguno de los dos pasos usa el endpoint `POST /v1/admin/tracks`. Publicar
-reenvía el MP3 entero y recalcula su hash; copiar la base y el disco tal cual
-preserva los `storageKey` existentes y evita subir dos veces lo mismo.
+reenvía el MP3 entero y recalcula su hash; copiar la base y los archivos tal
+cual preserva los `storageKey` existentes y evita subir dos veces lo mismo.
 
 ---
 
 ## 1. Crear la infraestructura
 
 En Render: **New → Blueprint**, apuntando a `estaban2905/pulse-api`. Lee
-[`render.yaml`](render.yaml) y crea el servicio web, la base y el disco de
-20 GB.
+[`render.yaml`](render.yaml) y crea el servicio web y la base. Sin disco: los
+archivos están en R2.
 
 `PULSE_ADMIN_TOKEN` y los tres secretos de firma —`JWT_ACCESS_SECRET`,
 `JWT_REFRESH_SECRET` y `MEDIA_SIGNING_SECRET`— se generan solos. Cópialos del
 panel (*Environment*) si los necesitas desde un cliente.
 
-Render pedirá dos valores al crear el blueprint, porque dependen de dónde quede
-la web y no se pueden deducir aquí:
+Render pedirá estos valores al crear el blueprint, porque no se pueden deducir
+desde aquí:
 
 | Variable | Qué es | Ejemplo |
 |---|---|---|
 | `PUBLIC_WEB_URL` | Base de los enlaces de restablecer contraseña y verificar correo | `https://pulse.app` |
 | `CORS_ORIGINS` | Orígenes autorizados a llamar con credenciales, separados por comas | `https://pulse.app,https://www.pulse.app` |
+| `S3_ENDPOINT` | Endpoint de R2, sin el nombre del cubo | `https://….r2.cloudflarestorage.com` |
+| `COVERS_PUBLIC_URL` | Base pública del cubo de portadas | `https://pub-….r2.dev` |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | Credenciales del token de R2 | — |
 
-Los dos apuntan a la **web**, no al API. Si `CORS_ORIGINS` queda vacío el
-servicio arranca igual, pero ningún navegador podrá usarlo: en producción no hay
-lista de reserva, y el único aviso es una línea en el log del arranque.
+Los dos primeros apuntan a la **web**, no al API. Si `CORS_ORIGINS` queda vacío
+el servicio arranca igual, pero ningún navegador podrá usarlo: en producción no
+hay lista de reserva, y el único aviso es una línea en el log del arranque.
+
+Las de R2 sí paran el arranque: `StorageService` las exige por nombre y lanza al
+construir el módulo, así que sin ellas el servicio no llega a escuchar.
 
 Si el servicio queda con un nombre distinto de `pulse-api`, corrige
 `PUBLIC_API_URL` para que apunte a su dominio real.
@@ -44,11 +49,18 @@ dominio de nivel superior (`pulse.app` y `api.pulse.app`), cámbialo a `lax`.
 | Recurso | Plan | Mensual |
 |---|---|---|
 | Servicio web | Starter | ~$7 |
-| Disco persistente | 20 GB | ~$5 |
 | PostgreSQL | Basic 256 MB | ~$6 |
+| Cloudflare R2 | 6 GB de 10 GB gratuitos | $0 |
 
-El disco obliga a instancia de pago y a una sola réplica: los despliegues tienen
-un corte breve, porque el disco no se puede montar en dos instancias a la vez.
+Unos $13 al mes, y **planos**: lo único que sale de Render es JSON, así que la
+factura no crece con los oyentes. Cuando el audio salía del disco, cada
+reproducción eran 5,3 MB de ancho de banda a $0,15/GB, y con cien oyentes eso
+sumaba unos $35 al mes solo de tráfico. R2 no cobra por servir.
+
+El plan **Hobby** basta: Pro cuesta $25 al mes más y sus 20 GB extra de ancho de
+banda valen $3, así que nunca compensa. Su función estrella —el escalado
+horizontal— tampoco aplicaba mientras hubo disco, y ahora ya no hay disco que lo
+impida.
 
 ---
 
@@ -89,36 +101,45 @@ Borra `pulse.sql` cuando termines: lleva el catálogo entero.
 
 ---
 
-## 3. Subir `storage/` al disco
+## 3. Subir los archivos a R2
 
-Render da acceso SSH a los servicios de pago. Copia el comando de conexión
-desde la pestaña **Shell** del servicio (tiene la forma
-`srv-xxxxxxxx@ssh.virginia.render.com`).
+El audio y las portadas ya no viven en el disco del servidor: el API solo emite
+enlaces y el navegador descarga de Cloudflare. Por eso este paso va contra R2 y
+no por SSH, y por eso `render.yaml` ya no declara ningún disco.
 
-Son 1155 MP3 y 224 portadas. Con `tar` sobre SSH viajan en un solo flujo, sin
-abrir una conexión por archivo:
+Hacen falta **dos cubos**. El acceso público de R2 no se puede limitar a una
+parte del contenido, y las portadas tienen que ser públicas para poder ir dentro
+de un `<img src>`: compartiendo cubo, abrir unas abriría también el audio.
 
-```bash
-tar cf - storage | ssh srv-xxxxxxxx@ssh.virginia.render.com \
-  "cd /opt/render/project/src && tar xf -"
-```
+| Cubo | Contenido | Acceso |
+|---|---|---|
+| `pulse-media` | Los 1155 MP3 | Privado, con URL firmada |
+| `pulse-covers` | Las 224 portadas | Público, URL fija y cacheable |
 
-Sin `-z`: los MP3 ya están comprimidos y gzip solo gastaría CPU.
+En el panel de R2: crea `pulse-covers`, entra en sus **Settings** y activa la
+**Public Development URL**. Copia la dirección `https://pub-….r2.dev` que te dé
+y ponla en `COVERS_PUBLIC_URL`. En `pulse-media` no actives nada: sigue privado.
 
-Cuenta con horas, no minutos — 6,0 GB salen a la velocidad de subida de tu
-conexión, no de la bajada. Si se corta, `rsync` reanuda desde donde iba:
-
-```bash
-rsync -av --partial --progress -e ssh \
-  storage/ srv-xxxxxxxx@ssh.virginia.render.com:/opt/render/project/src/storage/
-```
-
-Verifica que llegó todo:
+Con las variables `S3_*` y `COVERS_PUBLIC_URL` puestas, mira primero qué se va
+a subir:
 
 ```bash
-ssh srv-xxxxxxxx@ssh.virginia.render.com \
-  "ls /opt/render/project/src/storage/audio | wc -l"   # 1155
+npm run upload-storage -- --dry-run
 ```
+
+Y luego sube de verdad:
+
+```bash
+npm run upload-storage
+```
+
+Cuenta con horas, no minutos: 6,0 GB salen a la velocidad de subida de tu
+conexión, no de la bajada. Es repetible —antes de cada archivo comprueba si ya
+está con el mismo tamaño—, así que si se corta, se relanza y sigue donde iba.
+
+**Este paso va antes del primer despliegue.** El servicio ya no tiene disco al
+que recurrir: si arranca con los cubos vacíos, el catálogo carga pero no suena
+nada.
 
 ---
 
@@ -129,15 +150,29 @@ curl https://pulse-api.onrender.com/v1/health
 curl https://pulse-api.onrender.com/v1/catalog | head -c 400
 ```
 
-Y una pista real, que es lo único que prueba que el disco quedó bien montado:
+Y una pista real, que es lo único que prueba que los cubos quedaron bien. La
+firma va en la URL, así que hay que sacar una del catálogo en vez de inventarla:
 
 ```bash
-curl -sI -H 'Range: bytes=0-1023' \
-  https://pulse-api.onrender.com/v1/tracks/get-lucky/stream
+curl -sL -o /dev/null -w '%{http_code} %{size_download}\n' \
+  "$(curl -s https://pulse-api.onrender.com/v1/catalog \
+     | grep -o 'https://[^"]*tracks/[^"]*stream[^"]*' | head -1)"
 ```
 
-Debe responder `206 Partial Content` con `Content-Range`. Un `404` significa
-que la fila existe en la base pero el MP3 no está en el disco.
+`-L` sigue la redirección hasta R2. Debe acabar en `200` con varios megas
+descargados. Un `403` significa que el enlace ya caducó o que las credenciales de
+R2 no cuadran; un `404` de Cloudflare, que la fila está en la base pero el MP3 no
+llegó al cubo.
+
+Y una portada, que va directa y sin firmar:
+
+```bash
+curl -sI "$(curl -s https://pulse-api.onrender.com/v1/catalog \
+  | grep -o 'https://pub-[^"]*' | head -1)"
+```
+
+Un `200` confirma que `pulse-covers` tiene activado el acceso público. Un `401`
+quiere decir que se quedó privado.
 
 La documentación queda en `https://pulse-api.onrender.com/docs`.
 

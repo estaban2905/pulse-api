@@ -40,19 +40,13 @@ services:
     startCommand: npm start
     healthCheckPath: /v1/health
 
-    # El audio y las portadas se sirven desde el disco local
-    # (`tracks.controller.ts`, `media.controller.ts`), y el sistema de archivos
-    # de Render es efímero. Sin este disco, cada despliegue borra el catálogo.
+    # Sin disco a propósito. El audio y las portadas viven en Cloudflare R2 y
+    # este servicio solo emite los enlaces: ni un byte de MP3 lo atraviesa, que
+    # es justo lo que antes se pagaba como ancho de banda de salida.
     #
-    # El punto de montaje tapa el directorio `storage/` del repo, incluidas las
-    # portadas versionadas: hay que subirlas al disco como el resto.
-    # 20 GB para 6 GB de catálogo no es derroche: un disco de Render se puede
-    # ampliar pero nunca reducir, así que quedarse corto se paga con una
-    # migración y quedarse largo con dos dólares al mes.
-    disk:
-      name: pulse-storage
-      mountPath: /opt/render/project/src/storage
-      sizeGB: 20
+    # Quitarlo tiene un segundo efecto: un disco no se puede montar en dos
+    # instancias a la vez, así que mientras estuvo aquí el servicio no podía
+    # escalar ni desplegarse sin un corte.
 
     envVars:
       - key: DATABASE_URL
@@ -111,3 +105,30 @@ services:
       # enlaces repartidos, que es exactamente lo que se quiere si se filtra.
       - key: MEDIA_SIGNING_SECRET
         generateValue: true
+
+      # Cloudflare R2, donde viven los archivos. `StorageService` exige las seis
+      # por nombre y lanza al construir el módulo si falta alguna, así que un
+      # despliegue sin ellas no llega a escuchar en el puerto.
+      #
+      # Son dos cubos y no uno porque el acceso público de R2 no se puede
+      # limitar a una parte del contenido: abrir el de las portadas —que deben
+      # ser públicas para poder ir en un `<img src>`— abriría también el audio.
+      - key: S3_ENDPOINT
+        sync: false
+
+      - key: S3_BUCKET
+        value: pulse-media
+
+      - key: S3_COVERS_BUCKET
+        value: pulse-covers
+
+      # Base pública del cubo de portadas: la URL de desarrollo `*.r2.dev` o el
+      # dominio propio, si se le pone uno.
+      - key: COVERS_PUBLIC_URL
+        sync: false
+
+      - key: S3_ACCESS_KEY
+        sync: false
+
+      - key: S3_SECRET_KEY
+        sync: false

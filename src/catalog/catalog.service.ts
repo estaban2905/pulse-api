@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { MediaSigningService } from '../config/media-signing.service';
+import { StorageService } from '../storage/storage.service';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LEGACY_TRACK_PREFIX = 'tr-';
@@ -16,11 +17,16 @@ const LEGACY_TRACK_PREFIX = 'tr-';
 export class CatalogService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly mediaSigning: MediaSigningService
+    private readonly mediaSigning: MediaSigningService,
+    private readonly storage: StorageService
   ) {}
 
   async getCatalog(apiUrl: string) {
-    const absolute = (path: string) => (path.startsWith('http') ? path : `${apiUrl}${path}`);
+    // Las portadas salen apuntando al almacenamiento y el resto a este API. La
+    // base guarda unas y otras igual, como rutas relativas, así que la
+    // diferencia se resuelve aquí y no con una migración de datos.
+    const absolute = (path: string) =>
+      path.startsWith('http') ? path : (this.storage.publicMediaUrl(path) ?? `${apiUrl}${path}`);
 
     const [artists, albums, tracks, genres, moods, systemPlaylists, followerCounts, playCounts] = await Promise.all([
       this.prisma.artist.findMany({

@@ -32,7 +32,7 @@ paths:
         - Catálogo
   /tracks/{id}/stream:
     get:
-      description: Devuelve el MP3 entero, o el trozo pedido si llega una cabecera `Range`. El reproductor necesita rangos para poder saltar por la canción sin descargarla completa.
+      description: "Redirige al archivo en el almacenamiento de objetos, con un enlace temporal. El audio no pasa por este servidor: quien atiende la descarga —y las cabeceras `Range` que el reproductor necesita para saltar por la canción— es el almacenamiento."
       operationId: streamTrack
       parameters:
         - name: id
@@ -41,12 +41,6 @@ paths:
           description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
           schema:
             example: get-lucky
-            type: string
-        - name: Range
-          in: header
-          description: Por ejemplo `bytes=0-65535`.
-          required: false
-          schema:
             type: string
         - name: sig
           required: true
@@ -64,22 +58,18 @@ paths:
           description: Marca de versión que emite el catálogo. Solo rompe la caché del cliente cuando se reemplaza el audio; el servidor la ignora.
           schema: {}
       responses:
-        "200":
-          description: MP3 completo.
-        "206":
-          description: Trozo del MP3 pedido por `Range`.
+        "302":
+          description: Redirección al archivo, con un enlace firmado y temporal.
         "403":
           description: La firma falta, no cuadra, o ya caducó. Vuelve a pedir `/catalog`.
         "404":
           description: No existe ninguna pista con ese identificador.
-        "416":
-          description: El `Range` pedido cae fuera del archivo.
       summary: Reproducir una pista
       tags:
         - Reproducción
   /media/covers/{file}:
     get:
-      description: Los archivos se nombran por el hash de su contenido, así que son inmutables y pueden cachearse un día entero.
+      description: Redirige a la portada en el almacenamiento de objetos. El catálogo ya devuelve esa dirección directamente, así que esta ruta existe sobre todo para los clientes que guardaron la antigua.
       operationId: getCover
       parameters:
         - name: file
@@ -90,10 +80,8 @@ paths:
             example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.jpg
             type: string
       responses:
-        "200":
-          description: La imagen (JPEG, PNG o WebP).
-        "404":
-          description: No hay ninguna portada con ese nombre.
+        "301":
+          description: Redirección permanente a la imagen.
       summary: Servir una portada
       tags:
         - Media
