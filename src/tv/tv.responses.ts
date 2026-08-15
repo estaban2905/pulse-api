@@ -52,3 +52,12 @@ export class NowPlayingStateDto {
   })
   nowPlaying!: NowPlayingDto | null;
 }
+
+
+export class TvCommandResultDto {
+  @ApiProperty({ example: 'pause', description: 'Qué pidió el mando.' })
+  action!: string;
+
+  @ApiProperty({ type: Number, nullable: true, description: 'Segundos o volumen, según la acción.' })
+  value!: number | null;
+}

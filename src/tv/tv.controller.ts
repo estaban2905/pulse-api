@@ -27,8 +27,8 @@ import { ApiErrorDto } from '../common/error.dto';
 import { Public } from '../auth/auth.decorators';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { Principal } from '../auth/authentication.guard';
-import { ClaimTvSessionDto, CreateTvSessionDto, ReportNowPlayingDto } from './tv.dto';
-import { NowPlayingStateDto, TvPairingDto, TvScreenDto } from './tv.responses';
+import { ClaimTvSessionDto, CreateTvSessionDto, ReportNowPlayingDto, TvCommandDto } from './tv.dto';
+import { NowPlayingStateDto, TvCommandResultDto, TvPairingDto, TvScreenDto } from './tv.responses';
 import { TvService } from './tv.service';
 
 /** La cabecera con la que se identifica una pantalla ya emparejada. */
@@ -79,6 +79,22 @@ export class TvController {
     if (!token) throw new BadRequestException('Falta la cabecera X-Pulse-Tv-Token');
     return this.tv.poll(token);
   }
+
+  @Post('command')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @ApiOperation({
+    operationId: 'sendTvCommand',
+    summary: 'El mando pide algo al teléfono',
+    description:
+      'El televisor no reproduce por su cuenta: quien manda sobre la cola y la reproducción es el teléfono. Esto es lo que hace que el botón de pausa del mando sirva para algo. Las órdenes caducan a los 20 segundos.'
+  })
+  @ApiHeader({ name: 'X-Pulse-Tv-Token', required: true })
+  @ApiNoContentResponse({ description: 'Anotada.' })
+  @HttpCode(204)
+  async command(@Body() body: TvCommandDto, @Headers(TV_TOKEN_HEADER) token?: string): Promise<void> {
+    if (!token) throw new BadRequestException('Falta la cabecera X-Pulse-Tv-Token');
+    await this.tv.sendCommand(token, body.action, body.value);
+  }
 }
 
 /**
@@ -124,6 +140,21 @@ export class MeTvController {
   @HttpCode(204)
   async unlink(@CurrentUser() user: Principal, @Param('sessionId') sessionId: string): Promise<void> {
     await this.tv.unlink(user.sub, sessionId);
+  }
+
+  @Get('tv/commands')
+  // El teléfono pregunta cada dos segundos mientras hay un televisor encendido;
+  // el techo general de 120 se le quedaría corto.
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  @ApiOperation({
+    operationId: 'takeTvCommands',
+    summary: 'Recoger lo que pidió el mando',
+    description:
+      'Devuelve las órdenes pendientes y las borra en la misma operación: una pausa no se puede aplicar dos veces. Lo que lleve más de 20 segundos sin recogerse se descarta.'
+  })
+  @ApiOkResponse({ type: [TvCommandResultDto] })
+  takeCommands(@CurrentUser() user: Principal) {
+    return this.tv.takeCommands(user.sub);
   }
 
   @Put('now-playing')

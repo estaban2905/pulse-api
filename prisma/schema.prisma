@@ -68,6 +68,7 @@ model User {
   preferences   UserPreference?
   refreshTokens RefreshToken[]
   tvSessions    TvSession[]
+  tvCommands    TvCommand[]
   nowPlaying    NowPlaying?
 }
 
@@ -130,6 +131,34 @@ model NowPlaying {
   positionMs Int     @default(0)
   isPlaying  Boolean @default(false)
   updatedAt  DateTime @updatedAt
+}
+
+/**
+ * Una orden del televisor al teléfono.
+ *
+ * El resto del canal va en un solo sentido —el teléfono cuenta qué suena— y con
+ * eso la pantalla solo puede mirar. Esto es el sentido contrario: el mando pulsa
+ * pausa y el teléfono, que es quien manda de verdad sobre la reproducción, se
+ * entera.
+ *
+ * Se borran al entregarse. Una orden es un instante, no un estado: si el
+ * teléfono estaba apagado, «pausa» de hace diez minutos no tiene que aplicarse
+ * al volver.
+ */
+model TvCommand {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// `play`, `pause`, `next`, `previous`, `seek`, `shuffle`, `repeat`, `volume`
+  action String
+
+  /// Segundos para `seek`, 0-100 para `volume`. Nulo en el resto.
+  value Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Artist {

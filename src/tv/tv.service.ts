@@ -194,4 +194,48 @@ export class TvService {
       update: data
     });
   }
+
+  // ---------------------------------------------------------------------
+  // Órdenes del mando
+  // ---------------------------------------------------------------------
+
+  /**
+   * Cuánto vale una orden sin recoger.
+   *
+   * Una pulsación es un instante. Si el teléfono estaba sin cobertura, aplicar
+   * un «pausa» de hace un minuto al volver sería peor que perderlo.
+   */
+  private static readonly ORDEN_TTL_MS = 20_000;
+
+  /** El televisor manda una orden. Se identifica con su token, no con sesión. */
+  async sendCommand(token: string, action: string, value?: number) {
+    const session = await this.sessionFromToken(token);
+    if (!session.userId) {
+      throw new UnauthorizedException('Esta pantalla todavía no está vinculada a ninguna cuenta');
+    }
+
+    await this.prisma.tvCommand.create({
+      data: { userId: session.userId, action, value: value ?? null }
+    });
+  }
+
+  /**
+   * El teléfono recoge lo que haya. Se entrega y se borra en una transacción:
+   * dos recogidas simultáneas no pueden aplicar la misma pausa dos veces.
+   */
+  async takeCommands(userId: string) {
+    const desde = new Date(Date.now() - TvService.ORDEN_TTL_MS);
+
+    const [ordenes] = await this.prisma.$transaction([
+      this.prisma.tvCommand.findMany({
+        where: { userId, createdAt: { gte: desde } },
+        orderBy: { createdAt: 'asc' },
+        select: { action: true, value: true }
+      }),
+      // Se borra todo, también lo caducado: dejarlo sería acumular basura.
+      this.prisma.tvCommand.deleteMany({ where: { userId } })
+    ]);
+
+    return ordenes.map((o) => ({ action: o.action, value: o.value }));
+  }
 }

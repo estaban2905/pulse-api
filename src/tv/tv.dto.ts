@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsString, Length, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsString, Length, Min } from 'class-validator';
 
 import { Optional, Trim } from '../common/validation';
 
@@ -24,6 +24,34 @@ export class ClaimTvSessionDto {
   @IsString()
   @Length(6, 6)
   code!: string;
+}
+
+/** Lo que el mando del televisor puede pedirle al teléfono. */
+export const TV_ACTIONS = [
+  'play',
+  'pause',
+  'next',
+  'previous',
+  'seek',
+  'shuffle',
+  'repeat',
+  'volume'
+] as const;
+
+export class TvCommandDto {
+  @ApiProperty({ enum: TV_ACTIONS, example: 'pause' })
+  @Trim()
+  @IsIn(TV_ACTIONS as unknown as string[])
+  action!: string;
+
+  @ApiPropertyOptional({
+    example: 42,
+    description: 'Segundos para `seek`, 0-100 para `volume`. Se ignora en el resto.'
+  })
+  @Optional()
+  @IsInt()
+  @Min(0)
+  value?: number;
 }
 
 export class ReportNowPlayingDto {

@@ -153,6 +153,32 @@ paths:
                 $ref: "#/components/schemas/ApiErrorDto"
       summary: Qué debe mostrar la pantalla
       tags: *a1
+  /tv/command:
+    post:
+      description: "El televisor no reproduce por su cuenta: quien manda sobre la cola y la reproducción es el teléfono. Esto es lo que hace que el botón de pausa del mando sirva para algo. Las órdenes caducan a los 20 segundos."
+      operationId: sendTvCommand
+      parameters:
+        - name: x-pulse-tv-token
+          required: true
+          in: header
+          schema:
+            type: string
+        - name: X-Pulse-Tv-Token
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TvCommandDto"
+      responses:
+        "204":
+          description: Anotada.
+      summary: El mando pide algo al teléfono
+      tags: *a1
   /me/tv/claim:
     post:
       description: Con el código que enseña la pantalla. A partir de aquí, ese televisor sigue a esta cuenta.
@@ -221,6 +247,24 @@ paths:
         "401": *a2
       security: *a3
       summary: Desvincular un televisor
+      tags: *a4
+  /me/tv/commands:
+    get:
+      description: "Devuelve las órdenes pendientes y las borra en la misma operación: una pausa no se puede aplicar dos veces. Lo que lleve más de 20 segundos sin recogerse se descarta."
+      operationId: takeTvCommands
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TvCommandResultDto"
+        "401": *a2
+      security: *a3
+      summary: Recoger lo que pidió el mando
       tags: *a4
   /me/now-playing:
     put:
@@ -1581,6 +1625,27 @@ components:
         - statusCode
         - message
         - error
+    TvCommandDto:
+      type: object
+      properties:
+        action:
+          type: string
+          enum:
+            - play
+            - pause
+            - next
+            - previous
+            - seek
+            - shuffle
+            - repeat
+            - volume
+          example: pause
+        value:
+          type: number
+          example: 42
+          description: Segundos para `seek`, 0-100 para `volume`. Se ignora en el resto.
+      required:
+        - action
     ClaimTvSessionDto:
       type: object
       properties:
@@ -1602,6 +1667,20 @@ components:
       required:
         - id
         - name
+    TvCommandResultDto:
+      type: object
+      properties:
+        action:
+          type: string
+          example: pause
+          description: Qué pidió el mando.
+        value:
+          type: number
+          nullable: true
+          description: Segundos o volumen, según la acción.
+      required:
+        - action
+        - value
     ReportNowPlayingDto:
       type: object
       properties:
