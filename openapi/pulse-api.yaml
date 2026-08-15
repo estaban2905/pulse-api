@@ -101,6 +101,145 @@ paths:
       summary: Letra de una pista
       tags:
         - Letras
+  /tv/sessions:
+    post:
+      description: Lo llama el televisor al arrancar. Devuelve el código que hay que enseñar —dentro de un QR— y el token con el que la pantalla preguntará después. El código caduca a los dos minutos.
+      operationId: createTvSession
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTvSessionDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TvPairingDto"
+      summary: Abrir una pantalla y pedir código
+      tags: &a1
+        - Televisores
+  /tv/now-playing:
+    get:
+      description: "Tres respuestas en una: que siga esperando a que la reclamen, que ya está emparejada pero sin música, o qué suena. También sirve de latido para saber que el televisor sigue encendido."
+      operationId: pollTvSession
+      parameters:
+        - name: x-pulse-tv-token
+          required: true
+          in: header
+          schema:
+            type: string
+        - name: X-Pulse-Tv-Token
+          in: header
+          description: El token que devolvió el emparejamiento.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NowPlayingStateDto"
+        "401":
+          description: La pantalla ya no está autorizada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      summary: Qué debe mostrar la pantalla
+      tags: *a1
+  /me/tv/claim:
+    post:
+      description: Con el código que enseña la pantalla. A partir de aquí, ese televisor sigue a esta cuenta.
+      operationId: claimTvSession
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimTvSessionDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TvScreenDto"
+        "401": &a2
+          description: Falta el access token, o no es válido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+        "404":
+          description: El código no es válido o ya caducó.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorDto"
+      security: &a3
+        - BearerAuth: []
+      summary: Vincular un televisor
+      tags: &a4
+        - Televisores
+  /me/tv:
+    get:
+      description: "`online` es cierto si la pantalla dio señales en el último minuto."
+      operationId: listTvScreens
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TvScreenDto"
+        "401": *a2
+      security: *a3
+      summary: Televisores vinculados
+      tags: *a4
+  /me/tv/{sessionId}:
+    delete:
+      operationId: unlinkTvScreen
+      parameters:
+        - name: sessionId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Desvinculado, o no estaba.
+        "401": *a2
+      security: *a3
+      summary: Desvincular un televisor
+      tags: *a4
+  /me/now-playing:
+    put:
+      description: "Lo llama el teléfono al empezar una canción, al pausar y al saltar. No hace falta en cada segundo: la respuesta lleva el momento del aviso para que la pantalla calcule el resto."
+      operationId: reportNowPlaying
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportNowPlayingDto"
+      responses:
+        "204":
+          description: Registrado.
+        "401": *a2
+      security: *a3
+      summary: Informar de qué suena
+      tags: *a4
   /media/covers/{file}:
     get:
       description: Redirige a la portada en el almacenamiento de objetos. El catálogo ya devuelve esa dirección directamente, así que esta ruta existe sobre todo para los clientes que guardaron la antigua.
@@ -155,7 +294,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
       summary: Crear una cuenta
-      tags: &a1
+      tags: &a5
         - Sesión
   /auth/login:
     post:
@@ -192,7 +331,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
       summary: Iniciar sesión
-      tags: *a1
+      tags: *a5
   /auth/refresh:
     post:
       description: "Rota el refresh token: el anterior queda anulado en el mismo canje. Si uno ya usado vuelve a aparecer se cierran todas las sesiones de esa cuenta, porque solo se copia lo que se ha robado."
@@ -223,7 +362,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
       summary: Renovar el access token
-      tags: *a1
+      tags: *a5
   /auth/logout:
     post:
       description: "Anula el refresh token y borra la cookie. Es idempotente: sin sesión abierta también responde 204."
@@ -239,7 +378,7 @@ paths:
         "204":
           description: ""
       summary: Cerrar la sesión actual
-      tags: *a1
+      tags: *a5
   /auth/forgot-password:
     post:
       description: Responde 204 exista o no la cuenta. Decir cuál de las dos convertiría este formulario en una forma de averiguar qué correos están registrados.
@@ -255,7 +394,7 @@ paths:
         "204":
           description: Si esa cuenta existe, el enlace va de camino.
       summary: Pedir un enlace para restablecer la contraseña
-      tags: *a1
+      tags: *a5
   /auth/reset-password:
     post:
       description: "Cierra todas las sesiones abiertas de esa cuenta: si la contraseña la tenía alguien más, su sesión también cae."
@@ -277,7 +416,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
       summary: Fijar una contraseña nueva con el enlace recibido
-      tags: *a1
+      tags: *a5
   /auth/verify-email/request:
     post:
       operationId: requestEmailVerification
@@ -288,7 +427,7 @@ paths:
       security:
         - BearerAuth: []
       summary: Pedir el correo de confirmación
-      tags: *a1
+      tags: *a5
   /auth/verify-email:
     post:
       operationId: verifyEmail
@@ -309,7 +448,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
       summary: Confirmar el correo con el enlace recibido
-      tags: *a1
+      tags: *a5
   /auth/me:
     get:
       operationId: getMe
@@ -330,7 +469,7 @@ paths:
       security:
         - BearerAuth: []
       summary: Perfil de la sesión actual
-      tags: *a1
+      tags: *a5
   /me/profile:
     patch:
       description: "El nombre y el avatar. El correo no se toca aquí: es la identidad con la que se inicia sesión y cambiarlo exige verificar antes el buzón nuevo."
@@ -349,16 +488,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserProfileDto"
-        "401": &a2
+        "401": &a6
           description: Falta el access token, o no es válido.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: &a3
+      security: &a7
         - BearerAuth: []
       summary: Cambiar los datos de la cuenta
-      tags: &a4
+      tags: &a8
         - Biblioteca
   /me/library:
     get:
@@ -372,10 +511,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LibraryDto"
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Biblioteca completa
-      tags: *a4
+      tags: *a8
   /me/favourites/{trackId}:
     put:
       operationId: addFavourite
@@ -394,16 +533,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FavouriteResultDto"
-        "401": *a2
+        "401": *a6
         "404":
           description: No existe ninguna pista con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a3
+      security: *a7
       summary: Marcar una pista como favorita
-      tags: *a4
+      tags: *a8
     delete:
       operationId: removeFavourite
       parameters:
@@ -417,10 +556,10 @@ paths:
       responses:
         "204":
           description: "Quitada, o no estaba: el resultado es el mismo."
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Quitar una pista de favoritos
-      tags: *a4
+      tags: *a8
   /me/albums/{albumId}:
     put:
       operationId: saveAlbum
@@ -438,16 +577,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AlbumSaveResultDto"
-        "401": *a2
+        "401": *a6
         "404":
           description: No existe ningún álbum con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a3
+      security: *a7
       summary: Guardar un álbum en la biblioteca
-      tags: *a4
+      tags: *a8
     delete:
       operationId: removeAlbum
       parameters:
@@ -460,10 +599,10 @@ paths:
       responses:
         "204":
           description: Quitado, o no estaba.
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Quitar un álbum de la biblioteca
-      tags: *a4
+      tags: *a8
   /me/artists/{artistId}:
     put:
       operationId: followArtist
@@ -481,16 +620,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ArtistFollowResultDto"
-        "401": *a2
+        "401": *a6
         "404":
           description: No existe ningún artista con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a3
+      security: *a7
       summary: Seguir a un artista
-      tags: *a4
+      tags: *a8
     delete:
       operationId: unfollowArtist
       parameters:
@@ -503,10 +642,10 @@ paths:
       responses:
         "204":
           description: Ya no se sigue, tanto si se seguía como si no.
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Dejar de seguir a un artista
-      tags: *a4
+      tags: *a8
   /me/history:
     post:
       description: El cliente decide cuándo cuenta como escucha, y no manda nada si la sesión privada está activa.
@@ -525,26 +664,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HistoryEntryDto"
-        "401": *a2
+        "401": *a6
         "404":
           description: No existe ninguna pista con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a3
+      security: *a7
       summary: Registrar una reproducción
-      tags: *a4
+      tags: *a8
     delete:
       operationId: clearHistory
       parameters: []
       responses:
         "204":
           description: Historial vacío.
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Vaciar el historial
-      tags: *a4
+      tags: *a8
   /me/history/{entryId}:
     delete:
       operationId: removeHistoryEntry
@@ -558,10 +697,10 @@ paths:
       responses:
         "204":
           description: "Borrada, o no era tuya: en ningún caso se dice cuál de las dos."
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Borrar una entrada del historial
-      tags: *a4
+      tags: *a8
   /me/preferences:
     get:
       description: "Siempre responde con valores: una cuenta que no ha guardado nada recibe los de fábrica, no un hueco. Existe porque un recurso que se puede cambiar tiene que poder leerse sin pedir la biblioteca entera."
@@ -574,10 +713,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PreferencesDto"
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Preferencias de la cuenta
-      tags: *a4
+      tags: *a8
     patch:
       description: Crea la fila si la cuenta todavía no tenía preferencias guardadas.
       operationId: updatePreferences
@@ -595,10 +734,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PreferencesDto"
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Cambiar las preferencias
-      tags: *a4
+      tags: *a8
   /me/playlists:
     get:
       operationId: listPlaylists
@@ -612,10 +751,10 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PlaylistDto"
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Playlists propias
-      tags: *a4
+      tags: *a8
     post:
       operationId: createPlaylist
       parameters: []
@@ -632,16 +771,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlaylistDto"
-        "401": *a2
+        "401": *a6
         "404":
           description: Alguna de las pistas indicadas no existe.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a3
+      security: *a7
       summary: Crear una playlist
-      tags: *a4
+      tags: *a8
   /me/playlists/{playlistId}:
     patch:
       description: "Si viene `trackIds`, sustituye la lista completa en ese orden: así se reordena y se quita a la vez."
@@ -666,16 +805,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlaylistDto"
-        "401": *a2
+        "401": *a6
         "404":
           description: No hay ninguna playlist tuya con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a3
+      security: *a7
       summary: Editar una playlist
-      tags: *a4
+      tags: *a8
     delete:
       operationId: deletePlaylist
       parameters:
@@ -688,10 +827,10 @@ paths:
       responses:
         "204":
           description: Borrada, o no era tuya.
-        "401": *a2
-      security: *a3
+        "401": *a6
+      security: *a7
       summary: Borrar una playlist
-      tags: *a4
+      tags: *a8
   /admin/tracks:
     get:
       description: Incluye las pistas en espera, que no aparecen en `/catalog`, y los álbumes a los que se pueden mover.
@@ -704,23 +843,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminCatalogDto"
-        "401": &a5
+        "401": &a9
           description: Sin sesión válida ni token de servicio.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "403": &a6
+        "403": &a10
           description: La sesión es válida pero la cuenta no es ADMIN.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: &a7
+      security: &a11
         - AdminToken: []
         - BearerAuth: []
       summary: Listar el catálogo completo para mantenimiento
-      tags: &a8
+      tags: &a12
         - Admin
     post:
       description: "Única puerta de entrada al catálogo. Es idempotente por slug: reenviar una pista ya publicada la actualiza en vez de duplicarla, así que una subida cortada se puede reintentar tal cual. Lo que llega incompleto entra pero queda en espera, y se publica solo cuando no falta nada (ver `pending`)."
@@ -745,8 +884,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a5
-        "403": *a6
+        "401": *a9
+        "403": *a10
         "409":
           description: Ese mismo audio, byte a byte, ya está publicado con otro slug.
           content:
@@ -759,9 +898,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a7
+      security: *a11
       summary: Publicar una pista con su audio
-      tags: *a8
+      tags: *a12
   /admin/tracks/{identifier}:
     patch:
       operationId: updateAdminTrack
@@ -792,17 +931,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a5
-        "403": *a6
+        "401": *a9
+        "403": *a10
         "404":
           description: No existe ninguna pista con ese identificador.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a7
+      security: *a11
       summary: Editar los metadatos de una pista
-      tags: *a8
+      tags: *a12
   /admin/albums/{id}:
     patch:
       description: El año es el único dato que retiene pistas fuera del catálogo. Al corregirlo se publican las que solo esperaban eso; una pista retirada a mano no vuelve.
@@ -834,17 +973,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a5
-        "403": *a6
+        "401": *a9
+        "403": *a10
         "404":
           description: No existe ningún álbum con ese UUID.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a7
+      security: *a11
       summary: Editar un álbum y rescatar sus pistas en espera
-      tags: *a8
+      tags: *a12
   /admin/artists/{id}:
     patch:
       description: "Géneros, reseña y retrato. El primer género es el que hereda cada pista suya que se publique sin género, así que corregirlo aquí evita que sigan cayendo en «Sin clasificar». Una publicación nunca pisa estos datos: este es el único sitio donde se cambian."
@@ -876,17 +1015,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a5
-        "403": *a6
+        "401": *a9
+        "403": *a10
         "404":
           description: No existe ningún artista con ese UUID.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a7
+      security: *a11
       summary: Editar la ficha de un artista
-      tags: *a8
+      tags: *a12
   /admin/tracks/{identifier}/audio:
     post:
       description: El archivo se guarda por el hash de su contenido, así que el `streamUrl` que devuelve trae una versión nueva y los clientes no reutilizan el MP3 anterior.
@@ -918,8 +1057,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a5
-        "403": *a6
+        "401": *a9
+        "403": *a10
         "404":
           description: No existe ninguna pista con ese identificador.
           content:
@@ -932,9 +1071,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a7
+      security: *a11
       summary: Reemplazar el audio de una pista ya publicada
-      tags: *a8
+      tags: *a12
   /admin/covers:
     post:
       description: Devuelve la ruta ya servible. Se guarda por el hash del contenido, así que subir dos veces la misma imagen no ocupa el doble.
@@ -959,17 +1098,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-        "401": *a5
-        "403": *a6
+        "401": *a9
+        "403": *a10
         "413":
           description: La imagen pasa de 5 MB.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiErrorDto"
-      security: *a7
+      security: *a11
       summary: Subir una portada
-      tags: *a8
+      tags: *a12
 info:
   title: Pulse Music API
   description: |-
@@ -1357,6 +1496,130 @@ components:
         - source
         - fetchedAt
         - lines
+    CreateTvSessionDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: TV del salón
+          description: Cómo se llamará en la lista de dispositivos del teléfono.
+    TvPairingDto:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: K7M2QP
+          description: Lo que se enseña en pantalla, dentro del QR.
+        token:
+          type: string
+          description: Token propio de la pantalla. Se guarda en el televisor y no caduca al emparejar.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Cuándo deja de servir el código.
+      required:
+        - sessionId
+        - code
+        - token
+        - expiresAt
+    NowPlayingDto:
+      type: object
+      properties:
+        trackId:
+          type: string
+          format: uuid
+        positionMs:
+          type: number
+          example: 42500
+        isPlaying:
+          type: boolean
+        reportedAt:
+          type: string
+          format: date-time
+          description: Cuándo lo informó el teléfono. La pantalla extrapola desde aquí.
+      required:
+        - trackId
+        - positionMs
+        - isPlaying
+        - reportedAt
+    NowPlayingStateDto:
+      type: object
+      properties:
+        paired:
+          type: boolean
+          description: Falso mientras nadie haya reclamado el código.
+        nowPlaying:
+          nullable: true
+          description: Nulo si no está emparejada, o si la cuenta no está reproduciendo nada.
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/NowPlayingDto"
+      required:
+        - paired
+        - nowPlaying
+    ApiErrorDto:
+      type: object
+      properties:
+        statusCode:
+          type: number
+          example: 400
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          example:
+            - title must be longer than or equal to 1 characters
+        error:
+          type: string
+          example: Bad Request
+      required:
+        - statusCode
+        - message
+        - error
+    ClaimTvSessionDto:
+      type: object
+      properties:
+        code:
+          type: string
+          example: K7M2QP
+          description: El código que enseña el televisor. No distingue mayúsculas.
+      required:
+        - code
+    TvScreenDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: TV del salón
+      required:
+        - id
+        - name
+    ReportNowPlayingDto:
+      type: object
+      properties:
+        trackId:
+          type: string
+          format: uuid
+          description: La pista que está sonando.
+        positionMs:
+          type: number
+          example: 42500
+          description: Posición en milisegundos. El televisor la extrapola entre dos avisos.
+        isPlaying:
+          type: boolean
+          description: "Falso en pausa: la pantalla deja de avanzar la letra."
+      required:
+        - trackId
+        - positionMs
+        - isPlaying
     RegisterDto:
       type: object
       properties:
@@ -1429,27 +1692,6 @@ components:
         - accessToken
         - expiresIn
         - user
-    ApiErrorDto:
-      type: object
-      properties:
-        statusCode:
-          type: number
-          example: 400
-        message:
-          oneOf:
-            - type: string
-            - type: array
-              items:
-                type: string
-          example:
-            - title must be longer than or equal to 1 characters
-        error:
-          type: string
-          example: Bad Request
-      required:
-        - statusCode
-        - message
-        - error
     LoginDto:
       type: object
       properties:
@@ -1663,14 +1905,14 @@ components:
             - en
         streamQuality:
           type: string
-          enum: &a9
+          enum: &a13
             - low
             - normal
             - high
             - max
         downloadQuality:
           type: string
-          enum: *a9
+          enum: *a13
         autoplay:
           type: boolean
         crossfade:

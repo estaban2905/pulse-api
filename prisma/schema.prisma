@@ -67,6 +67,69 @@ model User {
   history       ListeningHistory[]
   preferences   UserPreference?
   refreshTokens RefreshToken[]
+  tvSessions    TvSession[]
+  nowPlaying    NowPlaying?
+}
+
+/**
+ * Un televisor emparejado con una cuenta.
+ *
+ * Existe porque Google Cast no llega a todas partes: Samsung y LG no lo
+ * implementan, así que en esos televisores la aplicación no puede *recibir* una
+ * canción y hay que dársela por otra vía. Esto es esa vía, y sirve igual para
+ * una app de Tizen, una de webOS o el navegador del propio televisor.
+ *
+ * El televisor no inicia sesión: escribir una contraseña con un mando a
+ * distancia es una forma de perder usuarios. En su lugar enseña un código, el
+ * teléfono lo reclama, y a partir de ahí la pantalla queda ligada a la cuenta
+ * sin haber tecleado nada.
+ */
+model TvSession {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Lo que se enseña en pantalla, dentro del QR. Corto porque a veces hay que
+  /// leerlo y teclearlo a mano, y se borra en cuanto se reclama: un código que
+  /// sigue sirviendo después de usarse es un código que alguien puede reutilizar.
+  code       String?   @unique
+  codeExpiry DateTime?
+
+  /// Huella del token del televisor, nunca el valor. Igual que los refresh.
+  tokenHash String @db.VarChar(64) @unique
+
+  /// Nulo mientras nadie la ha reclamado.
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Cómo se llama en la lista de dispositivos del teléfono.
+  name String @default("Televisor")
+
+  /// Para poder ocultar las que llevan semanas sin dar señales.
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId, lastSeenAt])
+  @@index([codeExpiry])
+}
+
+/**
+ * Qué está sonando ahora mismo en la cuenta.
+ *
+ * Una fila por usuario y se sobrescribe: no es un historial —de eso ya se
+ * encarga `ListeningHistory`—, es una foto del instante para que la pantalla
+ * del televisor sepa qué dibujar.
+ *
+ * La posición se guarda con el momento en que se informó, no sola. Así el
+ * televisor puede calcular dónde va la canción entre dos avisos en lugar de
+ * quedarse congelado esperando el siguiente.
+ */
+model NowPlaying {
+  userId String @id @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  trackId    String  @db.Uuid
+  positionMs Int     @default(0)
+  isPlaying  Boolean @default(false)
+  updatedAt  DateTime @updatedAt
 }
 
 model Artist {

@@ -7,6 +7,8 @@ import { CatalogService } from './catalog/catalog.service';
 import { TracksController } from './tracks/tracks.controller';
 import { LyricsController } from './lyrics/lyrics.controller';
 import { LyricsService } from './lyrics/lyrics.service';
+import { MeTvController, TvController } from './tv/tv.controller';
+import { TvService } from './tv/tv.service';
 import { MediaController } from './media/media.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { AdminModule } from './admin/admin.module';
@@ -29,10 +31,19 @@ import { StorageModule } from './storage/storage.module';
     MeModule,
     AdminModule
   ],
-  controllers: [HealthController, CatalogController, TracksController, LyricsController, MediaController],
+  controllers: [
+    HealthController,
+    CatalogController,
+    TracksController,
+    LyricsController,
+    TvController,
+    MeTvController,
+    MediaController
+  ],
   providers: [
     CatalogService,
     LyricsService,
+    TvService,
     // El orden importa y es el de esta lista: primero se frena al que llama
     // demasiado, después se comprueba quién es, y solo entonces si puede. Así
     // una avalancha de logins falsos no llega nunca a gastar CPU en argon2.
