@@ -17,9 +17,15 @@ paths:
         - Health
   /catalog:
     get:
-      description: "Artistas, álbumes y pistas publicadas, con URLs ya absolutas. Solo aparece lo publicado: una pista incompleta queda fuera."
+      description: "Artistas, álbumes y pistas publicadas, con URLs ya absolutas. Solo aparece lo publicado: una pista incompleta queda fuera. La respuesta lleva `ETag`: reenviarlo en `If-None-Match` ahorra la descarga entera cuando el catálogo no ha cambiado."
       operationId: getCatalog
-      parameters: []
+      parameters:
+        - name: If-None-Match
+          in: header
+          description: ETag recibido en una respuesta anterior. Si sigue vigente, la respuesta es `304` y sin cuerpo.
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: ""
@@ -27,6 +33,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CatalogDto"
+        "304":
+          description: El catálogo no ha cambiado desde el ETag enviado.
       summary: Catálogo público completo
       tags:
         - Catálogo
@@ -67,6 +75,32 @@ paths:
       summary: Reproducir una pista
       tags:
         - Reproducción
+  /tracks/{identifier}/lyrics:
+    get:
+      description: 'Devuelve la letra ya guardada o, la primera vez, la pide al proveedor y la conserva. Que una canción no tenga letra no es un error: se responde `200` con `status: "missing"` y `lines` vacío, y esa respuesta también se guarda para no repetir la consulta.'
+      operationId: getTrackLyrics
+      parameters:
+        - name: identifier
+          required: true
+          in: path
+          description: UUID de la pista, su slug canónico, o un identificador antiguo `tr-*`.
+          schema:
+            example: get-lucky
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LyricsDto"
+        "404":
+          description: No existe ninguna pista con ese identificador.
+        "503":
+          description: El proveedor no respondió y no había ninguna letra guardada para esta pista.
+      summary: Letra de una pista
+      tags:
+        - Letras
   /media/covers/{file}:
     get:
       description: Redirige a la portada en el almacenamiento de objetos. El catálogo ya devuelve esa dirección directamente, así que esta ruta existe sobre todo para los clientes que guardaron la antigua.
@@ -978,7 +1012,7 @@ tags:
   - name: Admin
     description: Mantenimiento del catálogo
 servers:
-  - url: http://localhost:4000/v1
+  - url: https://pulse-api-mq9p.onrender.com/v1
     description: Servidor
 components:
   securitySchemes:
@@ -1281,6 +1315,48 @@ components:
         - genres
         - moods
         - playlists
+    LyricLineDto:
+      type: object
+      properties:
+        time:
+          type: number
+          example: 12.34
+          description: Segundos desde el principio de la pista. Siempre 0 cuando la letra no está sincronizada.
+        text:
+          type: string
+          example: Like the legend of the phoenix
+      required:
+        - time
+        - text
+    LyricsDto:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - synced
+            - plain
+            - instrumental
+            - missing
+          description: "`synced` trae marcas de tiempo y permite karaoke; `plain` es solo texto; `instrumental` y `missing` llegan con `lines` vacío y son respuestas, no errores."
+        source:
+          type: string
+          example: lrclib
+          description: Quién proporcionó la letra.
+        fetchedAt:
+          type: string
+          format: date-time
+          description: Cuándo se consultó al proveedor. Una letra encontrada no se vuelve a pedir.
+        lines:
+          description: Ya ordenadas por tiempo.
+          type: array
+          items:
+            $ref: "#/components/schemas/LyricLineDto"
+      required:
+        - status
+        - source
+        - fetchedAt
+        - lines
     RegisterDto:
       type: object
       properties:

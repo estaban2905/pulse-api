@@ -29,6 +29,20 @@ enum AudioCodec {
   FLAC
 }
 
+/**
+ * Qué se sabe de la letra de una pista.
+ *
+ * `MISSING` no es la ausencia de fila: es la respuesta guardada de que el
+ * proveedor no la tiene. Distinguirlas es lo que evita volver a preguntar por
+ * la misma canción en cada reproducción.
+ */
+enum LyricStatus {
+  SYNCED
+  PLAIN
+  INSTRUMENTAL
+  MISSING
+}
+
 model User {
   id              String             @id @default(uuid()) @db.Uuid
   /// La dirección tal y como la escribió el usuario. Es la que se le muestra.
@@ -108,12 +122,49 @@ model Track {
   playlistTracks PlaylistTrack[]
   moodTracks     MoodTrack[]
   history        ListeningHistory[]
+  lyric          Lyric?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
   @@index([albumId])
   @@index([artistId])
   @@index([title])
+}
+
+/**
+ * La letra de una pista, ya consultada.
+ *
+ * El proveedor es LRCLIB, gratuito y sin clave, pero preguntarle desde cada
+ * cliente tenía dos costes: la misma pregunta se repetía por dispositivo y por
+ * recarga —la web solo cacheaba en memoria—, y la app móvil no podía tener
+ * letras sin reimplementar el proveedor entero. Preguntando aquí, se pregunta
+ * una vez y responden los dos clientes igual.
+ *
+ * `trackId` es la clave primaria y no hay `id` propio: una pista tiene una
+ * letra o no la tiene, y la relación 1-1 lo deja dicho en el esquema en lugar
+ * de confiarlo a un índice único que alguien podría quitar.
+ */
+model Lyric {
+  trackId String      @id @db.Uuid
+  track   Track       @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  status  LyricStatus
+
+  /// LRC con marcas de tiempo, tal y como llegó. Nulo si solo hay texto plano.
+  syncedText String?
+  /// Texto sin sincronizar. Se guarda aunque haya `syncedText`, porque es el
+  /// recambio si algún día el LRC resulta ilegible.
+  plainText  String?
+
+  /// De dónde salió. Existe para poder sustituir una letra a mano más adelante
+  /// sin que el refresco automático la pise.
+  source String @default("lrclib")
+
+  /// Cuándo se preguntó. Un `MISSING` caduca y se vuelve a intentar; una letra
+  /// encontrada no, porque no va a dejar de existir.
+  fetchedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, fetchedAt])
 }
 
 /**

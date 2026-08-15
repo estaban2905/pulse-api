@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { MediaSigningService } from '../config/media-signing.service';
@@ -6,6 +7,12 @@ import { StorageService } from '../storage/storage.service';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LEGACY_TRACK_PREFIX = 'tr-';
+
+/** El catálogo ya serializado, listo para responder o para comparar. */
+export interface CatalogSnapshot {
+  body: string;
+  etag: string;
+}
 
 /**
  * Catalog served from PostgreSQL.
@@ -15,11 +22,68 @@ const LEGACY_TRACK_PREFIX = 'tr-';
  */
 @Injectable()
 export class CatalogService {
+  /**
+   * Cuánto vale una copia del catálogo antes de volver a construirla.
+   *
+   * Un minuto es mucho para un dato que cambia cuando un administrador publica
+   * una canción, y poco para lo que cuesta: cada construcción recorre artistas,
+   * álbumes y pistas y además agrega el historial de escuchas **entero**. Sin
+   * esta ventana, esa agregación se repetía una vez por oyente que abría la
+   * aplicación, y se encarecía con cada reproducción registrada.
+   */
+  private static readonly CACHE_TTL_MS = 60_000;
+
+  /**
+   * La última copia servida. Una sola, y con la URL base dentro de la clave:
+   * las direcciones que contiene son absolutas, así que una copia hecha para un
+   * host no vale para otro.
+   */
+  private snapshot: (CatalogSnapshot & { key: string; builtAt: number }) | null = null;
+
+  /**
+   * Construcción en curso.
+   *
+   * Cuando la copia caduca, las peticiones que llegan a la vez encuentran todas
+   * la caché vacía. Sin esta cola, cada una lanzaría su propia agregación del
+   * historial contra la base; con ella sale una y las demás esperan su
+   * resultado.
+   */
+  private building: Promise<CatalogSnapshot> | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaSigning: MediaSigningService,
     private readonly storage: StorageService
   ) {}
+
+  /**
+   * El catálogo serializado y con su ETag, listo para responder.
+   *
+   * El ETag sale del cuerpo y no de una marca de tiempo: así dos copias
+   * idénticas comparten identificador aunque se hayan construido por separado,
+   * y un cliente que revalida se ahorra la descarga incluso después de que
+   * caduque la ventana del servidor.
+   */
+  async getSnapshot(apiUrl: string): Promise<CatalogSnapshot> {
+    const fresh =
+      this.snapshot?.key === apiUrl && Date.now() - this.snapshot.builtAt < CatalogService.CACHE_TTL_MS;
+    if (fresh && this.snapshot) return this.snapshot;
+
+    this.building ??= this.build(apiUrl).finally(() => {
+      this.building = null;
+    });
+    return this.building;
+  }
+
+  private async build(apiUrl: string): Promise<CatalogSnapshot> {
+    const body = JSON.stringify(await this.getCatalog(apiUrl));
+    // Débil, y con razón: lo que se promete es que el contenido significa lo
+    // mismo, no que los bytes vayan a salir comprimidos igual.
+    const etag = `W/"${createHash('sha1').update(body).digest('base64url')}"`;
+
+    this.snapshot = { key: apiUrl, body, etag, builtAt: Date.now() };
+    return this.snapshot;
+  }
 
   async getCatalog(apiUrl: string) {
     // Las portadas salen apuntando al almacenamiento y el resto a este API. La
